@@ -91,7 +91,7 @@ where
         !out
     }
 
-    fn bundle_multi(a: &Self::Storage, b: &Self::Storage) -> Self::StorageMulti {
+    fn bundle_multi(&self, a: &Self::Storage, b: &Self::Storage) -> Self::StorageMulti {
         a.enforce_constraints(b);
 
         a.iter()

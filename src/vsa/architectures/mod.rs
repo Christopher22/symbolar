@@ -15,15 +15,15 @@ pub trait VectorSymbolicArchitecture: Clone {
     fn random(&self, size: usize) -> Self::Storage;
     /// Normalize a multi-vector.
     fn normalize(&self, storage: Self::StorageMulti) -> Self::Storage;
+    /// Bundle two vectors.
+    fn bundle_multi(&self, a: &Self::Storage, b: &Self::Storage) -> Self::StorageMulti;
     /// Bundle a vector and normalize it.
     fn bundle(&self, a: &Self::Storage, b: &Self::Storage) -> Self::Storage {
-        self.normalize(Self::bundle_multi(a, b))
+        self.normalize(self.bundle_multi(a, b))
     }
 
     /// Bind two vectors.
     fn bind(a: &Self::Storage, b: &Self::Storage) -> Self::Storage;
-    /// Bundle two vectors.
-    fn bundle_multi(a: &Self::Storage, b: &Self::Storage) -> Self::StorageMulti;
     /// Permute a vector.
     fn permute(a: &Self::Storage, shifts: usize) -> Self::Storage;
     /// Inverse a vector.
@@ -33,12 +33,25 @@ pub trait VectorSymbolicArchitecture: Clone {
 }
 
 /// A underyling data type.
-pub trait Storage: Clone {
+#[allow(clippy::len_without_is_empty)]
+pub trait Storage: Clone + std::ops::Index<usize, Output = Self::Primitive> {
+    /// The underyling primitive type of the storage which can be read.
+    type Primitive;
+
+    /// The length of the storage.
+    fn len(&self) -> usize;
+
     /// Checks if two storages are compatible.
     fn enforce_constraints(&self, other: &Self);
 }
 
 impl<R: UIntResolution> Storage for bitvec::vec::BitVec<R, bitvec::order::Lsb0> {
+    type Primitive = bool;
+
+    fn len(&self) -> usize {
+        bitvec::vec::BitVec::len(self)
+    }
+
     fn enforce_constraints(&self, other: &Self) {
         debug_assert_eq!(
             self.len(),
@@ -49,6 +62,12 @@ impl<R: UIntResolution> Storage for bitvec::vec::BitVec<R, bitvec::order::Lsb0> 
     }
 }
 impl<R: Resolution> Storage for Vec<R> {
+    type Primitive = R;
+
+    fn len(&self) -> usize {
+        Vec::len(self)
+    }
+
     fn enforce_constraints(&self, other: &Self) {
         debug_assert_eq!(
             self.len(),
