@@ -4,3 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+bitvec = "1.0.1"
+parking_lot = "0.12.5"
+rand = "0.10.1"
