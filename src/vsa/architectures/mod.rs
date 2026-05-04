@@ -1,7 +1,9 @@
 //! Implementation of different architectures.
 
+mod bsc;
 mod map;
 
+pub use self::bsc::BinarySpatterCode;
 pub use self::map::MultiplyAddPermute;
 
 /// A vector symbolic architecture.
