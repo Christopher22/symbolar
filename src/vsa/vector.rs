@@ -5,7 +5,10 @@ use std::{
 };
 
 /// A trait abtracting about dynamic and fixed sizes.
-pub trait Size: Copy + Eq {}
+pub trait Size: std::fmt::Debug + Copy + Eq {
+    /// Get the size as a usize > 0.
+    fn size(&self) -> usize;
+}
 
 pub trait FixedSize: Default + Size {
     const SIZE: usize;
@@ -15,7 +18,11 @@ pub trait FixedSize: Default + Size {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Fixed<const N: usize>;
 
-impl<const N: usize> Size for Fixed<N> {}
+impl<const N: usize> Size for Fixed<N> {
+    fn size(&self) -> usize {
+        N
+    }
+}
 impl<const N: usize> FixedSize for Fixed<N> {
     const SIZE: usize = N;
 }
@@ -30,10 +37,14 @@ impl From<NonZero<usize>> for Dynamic {
     }
 }
 
-impl Size for Dynamic {}
+impl Size for Dynamic {
+    fn size(&self) -> usize {
+        self.0
+    }
+}
 
 /// A vector of a vector symbolic architecture.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Vector<S: Size, V: VectorSymbolicArchitecture> {
     /// The size of the vector.
     pub size: S,
@@ -41,28 +52,33 @@ pub struct Vector<S: Size, V: VectorSymbolicArchitecture> {
     data: V::Storage,
 }
 
-impl<V: VectorSymbolicArchitecture> Vector<Dynamic, V> {
-    /// Create a random vector with fixed dimensions.
-    pub fn random_fixed<const N: usize>(vsa: &V) -> Vector<Fixed<N>, V> {
-        let size = Fixed::<N>;
-        let data = vsa.random(N);
-        Vector {
+impl<S: Size, V: VectorSymbolicArchitecture> Vector<S, V> {
+    /// Create a random vector.
+    pub fn random(vsa: &V, size: S) -> Self {
+        let data = vsa.random(size.size());
+        Self {
             size,
             vsa: vsa.clone(),
             data,
         }
     }
+}
 
-    /// Create a random vector.
-    pub fn random(vsa: &V, size: usize) -> Self {
-        let data = vsa.random(size);
-        Self {
-            size: Dynamic(size),
-            vsa: vsa.clone(),
-            data,
-        }
+impl<S: Size, V: VectorSymbolicArchitecture> std::fmt::Debug for Vector<S, V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Vector")
+            .field("size", &self.size)
+            .finish_non_exhaustive()
     }
 }
+
+impl<S: Size, V: VectorSymbolicArchitecture> PartialEq for Vector<S, V> {
+    fn eq(&self, other: &Self) -> bool {
+        self.size == other.size && self.data == other.data
+    }
+}
+
+impl<S: Size, V: VectorSymbolicArchitecture> Eq for Vector<S, V> where V::Storage: Eq {}
 
 impl<'a, S: FixedSize, V: VectorSymbolicArchitecture> Add<&'a Self> for Vector<S, V> {
     type Output = Self;

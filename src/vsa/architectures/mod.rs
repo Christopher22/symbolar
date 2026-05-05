@@ -9,9 +9,9 @@ pub use self::map::MultiplyAddPermute;
 /// A vector symbolic architecture.
 pub trait VectorSymbolicArchitecture: Clone {
     /// The underlying storage of a single vector.
-    type Storage;
+    type Storage: Storage;
     /// The underlying storage of a multi vector.
-    type StorageMulti;
+    type StorageMulti: Storage;
 
     /// Create a random vector in the architecture.
     fn random(&self, size: usize) -> Self::Storage;
@@ -36,7 +36,7 @@ pub trait VectorSymbolicArchitecture: Clone {
 
 /// A underyling data type.
 #[allow(clippy::len_without_is_empty)]
-pub trait Storage: Clone + std::ops::Index<usize, Output = Self::Primitive> {
+pub trait Storage: Clone + PartialEq + std::ops::Index<usize, Output = Self::Primitive> {
     /// The underyling primitive type of the storage which can be read.
     type Primitive;
 
@@ -81,7 +81,7 @@ impl<R: Resolution> Storage for Vec<R> {
 }
 
 /// A resolution of a data type.
-pub trait Resolution: Clone + Copy {}
+pub trait Resolution: Clone + Copy + PartialEq {}
 
 /// A resolution of a data type limited to unsigned integers.
 pub trait UIntResolution: Resolution + bitvec::store::BitStore {}
