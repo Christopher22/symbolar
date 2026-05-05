@@ -12,6 +12,8 @@
     unused_qualifications
 )]
 
+mod vector_storage;
 mod vsa;
 
+pub use self::vector_storage::{Column, Queryable, StorageError, Value, VectorStorage};
 pub use self::vsa::*;

@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 bitvec = "1.0.1"
 parking_lot = "0.12.5"
+polars = { version = "0.53.0", features = ["dtype-categorical"] }
 rand = "0.10.1"
 
 [dev-dependencies]
