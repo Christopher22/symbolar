@@ -10,42 +10,41 @@ struct VectorIndex(usize);
 #[derive(Debug, Clone)]
 struct NamedVectors<S: Size, V: VectorSymbolicArchitecture> {
     vectors: Vec<Vector<S, V>>,
-    names: Vec<String>,
+    names: HashMap<String, VectorIndex>,
+    vsa: V,
+    size: S,
 }
 
 impl<S: Size, V: VectorSymbolicArchitecture> NamedVectors<S, V> {
-    pub fn new() -> Self {
+    fn new(vsa: V, size: S) -> Self {
         Self {
             vectors: Vec::new(),
-            names: Vec::new(),
+            names: HashMap::new(),
+            vsa,
+            size,
         }
     }
 
-    fn get(&self, name: &str) -> Option<&Vector<S, V>> {
-        self.names
-            .iter()
-            .position(|n| n == name)
-            .map(|index| &self.vectors[index])
+    fn get_by_index(&self, index: VectorIndex) -> Option<&Vector<S, V>> {
+        self.vectors.get(index.0)
     }
 
-    fn push(&mut self, name: String, vector: Vector<S, V>) -> VectorIndex {
-        let index = self.vectors.len();
-        self.vectors.push(vector);
-        self.names.push(name);
-        VectorIndex(index)
+    fn get_by_name(&self, name: &str) -> Option<&Vector<S, V>> {
+        self.names.get(name).map(|&index| &self.vectors[index.0])
     }
 
-    pub fn get_or_insert(&mut self, vsa: &V, size: S, name: &str) -> VectorIndex {
-        if let Some(index) = self.names.iter().position(|n| n == name) {
-            return VectorIndex(index);
-        }
-        self.push(name.to_string(), Vector::random(vsa, size))
+    pub fn get_or_insert(&mut self, name: impl Into<String>) -> VectorIndex {
+        *self.names.entry(name.into()).or_insert_with(|| {
+            let index = VectorIndex(self.vectors.len());
+            self.vectors.push(Vector::random(&self.vsa, self.size));
+            index
+        })
     }
 }
 
 #[derive(Debug, Clone)]
-struct ColumnData<S: Size, V: VectorSymbolicArchitecture> {
-    vector: Vector<S, V>,
+struct ColumnData {
+    vector: VectorIndex,
     column_type: ColumnType,
 }
 
@@ -62,13 +61,21 @@ enum ColumnType {
 #[derive(Debug, Clone)]
 pub struct VectorStorage<S: Size, V: VectorSymbolicArchitecture> {
     vectors: NamedVectors<S, V>,
-    columns: HashMap<String, ColumnData<S, V>>,
+    columns: HashMap<String, ColumnData>,
 }
 
 impl<S: Size, V: VectorSymbolicArchitecture> VectorStorage<S, V> {
+    /// Create a new empty vector storage.
+    pub fn new(vsa: V, size: S) -> Self {
+        Self {
+            vectors: NamedVectors::new(vsa, size),
+            columns: HashMap::new(),
+        }
+    }
+
     /// Create a new vector storage from a DataFrame.
-    pub fn new(vsa: V, size: S, dataframe: DataFrame) -> Result<Self, StorageError> {
-        let mut vectors = NamedVectors::new();
+    pub fn from_dataframe(vsa: V, size: S, dataframe: DataFrame) -> Result<Self, StorageError> {
+        let mut vectors = NamedVectors::new(vsa, size);
         let mut columns = HashMap::new();
 
         for col in dataframe.columns().iter() {
@@ -77,7 +84,7 @@ impl<S: Size, V: VectorSymbolicArchitecture> VectorStorage<S, V> {
                 name.to_string(),
                 match col.dtype() {
                     DataType::Enum(categories, _) => ColumnData {
-                        vector: Vector::random(&vsa, size),
+                        vector: vectors.get_or_insert(name.as_str()),
                         column_type: ColumnType::Enum {
                             categories: categories.clone(),
                             values: categories
@@ -85,7 +92,7 @@ impl<S: Size, V: VectorSymbolicArchitecture> VectorStorage<S, V> {
                                 .iter()
                                 .map(|cat| {
                                     // TODO: Handly invalid str
-                                    vectors.get_or_insert(&vsa, size, cat.expect("valid str"))
+                                    vectors.get_or_insert(cat.expect("valid str"))
                                 })
                                 .collect(),
                         },
@@ -93,10 +100,10 @@ impl<S: Size, V: VectorSymbolicArchitecture> VectorStorage<S, V> {
                     DataType::String => {
                         // The slow way: we need to iterate over all values to create vectors for them.
                         for value in col.str().expect("string column").into_iter().flatten() {
-                            vectors.get_or_insert(&vsa, size, value);
+                            vectors.get_or_insert(value);
                         }
                         ColumnData {
-                            vector: Vector::random(&vsa, size),
+                            vector: vectors.get_or_insert(name.as_str()),
                             column_type: ColumnType::String,
                         }
                     }
@@ -113,9 +120,35 @@ impl<S: Size, V: VectorSymbolicArchitecture> VectorStorage<S, V> {
         Ok(Self { vectors, columns })
     }
 
+    /// Add a new vector with the given name to the storage. If it already exists, return the existing vector.
+    pub fn push(&mut self, name: impl Into<String>) -> &Vector<S, V> {
+        let index = self.vectors.get_or_insert(name);
+        &self.vectors.vectors[index.0]
+    }
+
+    /// Add multiple vectors with the given names to the storage.
+    pub fn extend(&mut self, names: impl IntoIterator<Item = impl Into<String>>) {
+        for name in names {
+            self.push(name);
+        }
+    }
+
     /// Retrieve a vector by a query.
     pub fn get<Q: Queryable>(&self, query: &Q) -> Option<&Vector<S, V>> {
         query.query(self)
+    }
+
+    /// Query all known colums in the storage.
+    pub fn columns(&self) -> impl Iterator<Item = Column<'_>> {
+        self.columns.keys().map(|s| Column::from_str(s.as_str()))
+    }
+
+    /// Query all known values in the storage. This include the columns themselves.
+    pub fn values(&self) -> impl Iterator<Item = Value<'_>> {
+        self.vectors
+            .names
+            .keys()
+            .map(|s| Value::from_str(s.as_str()))
     }
 }
 
@@ -134,8 +167,17 @@ pub trait Queryable {
     /// Try to query a vector from the storage.
     fn query<'a, S: Size, V: VectorSymbolicArchitecture>(
         &self,
-        value: &'a VectorStorage<S, V>,
+        storage: &'a VectorStorage<S, V>,
     ) -> Option<&'a Vector<S, V>>;
+}
+
+impl Queryable for VectorIndex {
+    fn query<'a, S: Size, V: VectorSymbolicArchitecture>(
+        &self,
+        storage: &'a VectorStorage<S, V>,
+    ) -> Option<&'a Vector<S, V>> {
+        storage.vectors.get_by_index(*self)
+    }
 }
 
 /// A column name query.
@@ -170,9 +212,12 @@ impl std::fmt::Display for Column<'_> {
 impl<'s> Queryable for Column<'s> {
     fn query<'a, S: Size, V: VectorSymbolicArchitecture>(
         &self,
-        value: &'a VectorStorage<S, V>,
+        storage: &'a VectorStorage<S, V>,
     ) -> Option<&'a Vector<S, V>> {
-        value.columns.get(self.0.as_ref()).map(|col| &col.vector)
+        storage
+            .columns
+            .get(self.0.as_ref())
+            .and_then(|col| storage.vectors.get_by_index(col.vector))
     }
 }
 
@@ -208,22 +253,22 @@ impl std::fmt::Display for Value<'_> {
 impl<'s> Queryable for Value<'s> {
     fn query<'a, S: Size, V: VectorSymbolicArchitecture>(
         &self,
-        value: &'a VectorStorage<S, V>,
+        storage: &'a VectorStorage<S, V>,
     ) -> Option<&'a Vector<S, V>> {
-        value.vectors.get(self.0.as_ref())
+        storage.vectors.get_by_name(self.0.as_ref())
     }
 }
 
 impl<'s1, 's2> Queryable for (Column<'s1>, Value<'s2>) {
     fn query<'a, S: Size, V: VectorSymbolicArchitecture>(
         &self,
-        value: &'a VectorStorage<S, V>,
+        storage: &'a VectorStorage<S, V>,
     ) -> Option<&'a Vector<S, V>> {
-        let column = value.columns.get(self.0.0.as_ref())?;
+        let column = storage.columns.get(self.0.0.as_ref())?;
         match column.column_type {
             ColumnType::String => {
                 // For string columns, we can directly query the value vector.
-                value.vectors.get(self.1.0.as_ref())
+                storage.vectors.get_by_name(self.1.0.as_ref())
             }
             ColumnType::Enum {
                 ref categories,
@@ -235,7 +280,7 @@ impl<'s1, 's2> Queryable for (Column<'s1>, Value<'s2>) {
                     .iter()
                     .position(|cat| cat == Some(self.1.0.as_ref()))?;
                 let vector_index = &values[value_index];
-                value.vectors.vectors.get(vector_index.0)
+                storage.vectors.vectors.get(vector_index.0)
             }
         }
     }
@@ -244,11 +289,9 @@ impl<'s1, 's2> Queryable for (Column<'s1>, Value<'s2>) {
 impl Queryable for &str {
     fn query<'a, S: Size, V: VectorSymbolicArchitecture>(
         &self,
-        value: &'a VectorStorage<S, V>,
+        storage: &'a VectorStorage<S, V>,
     ) -> Option<&'a Vector<S, V>> {
-        Column::from_str(self)
-            .query(value)
-            .or_else(|| Value::from_str(self).query(value))
+        storage.vectors.get_by_name(self)
     }
 }
 
@@ -281,7 +324,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_construction() {
+    fn test_construction_empty() {
+        let vsa = crate::architectures::MultiplyAddPermute::<u8>::new(42);
+        let storage = VectorStorage::new(vsa, crate::Fixed::<128>);
+        assert!(storage.columns().next().is_none());
+        assert!(storage.values().next().is_none());
+    }
+
+    #[test]
+    fn test_construction_from_dataframe() {
         let enum_dtype = DataType::Enum(
             FrozenCategories::new(vec!["circle".into(), "square".into(), "triangle".into()])
                 .unwrap(),
@@ -302,8 +353,11 @@ mod tests {
         .expect("valid dataframe");
 
         let vsa = crate::architectures::MultiplyAddPermute::<u8>::new(42);
-        let storage =
-            VectorStorage::new(vsa, crate::Fixed::<128>, df).expect("valid vector storage");
+        let storage = VectorStorage::from_dataframe(vsa, crate::Fixed::<128>, df)
+            .expect("valid vector storage");
+
+        assert_eq!(storage.values().count(), 2 * 3 + 2);
+        assert_eq!(storage.columns().count(), 2);
 
         assert_eq!(storage["color"], storage[Column::from_str("color")]);
         assert_eq!(storage["shape"], storage[Column::from_str("shape")]);
@@ -315,6 +369,11 @@ mod tests {
             storage[(Column::from_str("shape"), Value::from_str("circle"))],
             storage[Value::from_str("circle")]
         );
+
+        // There is nothing special about a column vector ...
+        assert_eq!(storage[Column::from_str("color")], storage["color"]);
+        // ... but it must exist.
+        assert!(storage.get(&Column::from_str("red")).is_none());
 
         // A string column can be everything
         assert_eq!(
@@ -329,5 +388,31 @@ mod tests {
                 .get(&(Column::from_str("shape"), Value::from_str("red")))
                 .is_none()
         ); // Red is not a valid value for the shape column
+    }
+
+    #[test]
+    fn test_push() {
+        let vsa = crate::architectures::MultiplyAddPermute::<u8>::new(42);
+        let mut storage = VectorStorage::new(vsa, crate::Fixed::<128>);
+        storage.push("vec1");
+        storage.push("vec2");
+        storage.push("vec1");
+
+        assert_ne!(storage["vec1"], storage["vec2"]);
+        assert_eq!(storage["vec1"], storage["vec1"]);
+        assert_eq!(storage.values().count(), 2);
+        assert_eq!(storage.columns().count(), 0);
+    }
+
+    #[test]
+    fn test_extend() {
+        let vsa = crate::architectures::MultiplyAddPermute::<u8>::new(42);
+        let mut storage = VectorStorage::new(vsa, crate::Fixed::<128>);
+        storage.extend(["vec1", "vec1", "vec2"]);
+
+        assert_ne!(storage["vec1"], storage["vec2"]);
+        assert_eq!(storage["vec1"], storage["vec1"]);
+        assert_eq!(storage.values().count(), 2);
+        assert_eq!(storage.columns().count(), 0);
     }
 }
