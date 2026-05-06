@@ -12,8 +12,10 @@
     unused_qualifications
 )]
 
+mod expression;
 mod vector_storage;
 mod vsa;
 
+pub use self::expression::{Expression, ParseError, UnknownValue};
 pub use self::vector_storage::{Column, Queryable, StorageError, Value, VectorStorage};
 pub use self::vsa::*;

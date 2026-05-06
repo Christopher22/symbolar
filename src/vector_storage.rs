@@ -2,7 +2,7 @@ use std::{borrow::Cow, collections::HashMap};
 
 use polars::prelude::*;
 
-use crate::{Size, Vector, architectures::VectorSymbolicArchitecture};
+use crate::{Expression, Size, UnknownValue, Vector, architectures::VectorSymbolicArchitecture};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct VectorIndex(usize);
@@ -149,6 +149,14 @@ impl<S: Size, V: VectorSymbolicArchitecture> VectorStorage<S, V> {
             .names
             .keys()
             .map(|s| Value::from_str(s.as_str()))
+    }
+
+    /// Execute an expression on the storage, returning the resulting vector.
+    pub fn execute<'x, 'y: 'x>(
+        &'x self,
+        expression: &'y Expression,
+    ) -> Result<Cow<'x, Vector<S, V>>, UnknownValue> {
+        expression.evaluate(|name| self.get(&name).map(Cow::Borrowed))
     }
 }
 
@@ -414,5 +422,16 @@ mod tests {
         assert_eq!(storage["vec1"], storage["vec1"]);
         assert_eq!(storage.values().count(), 2);
         assert_eq!(storage.columns().count(), 0);
+    }
+
+    #[test]
+    fn test_execute() {
+        let vsa = crate::architectures::MultiplyAddPermute::<u8>::new(42);
+        let mut storage = VectorStorage::new(vsa, crate::Fixed::<128>);
+        storage.extend(["vec1", "vec2"]);
+
+        let expr = Expression::new("vec1");
+        let result = storage.execute(&expr).expect("expression should exist");
+        assert_eq!(result.as_ref(), &storage["vec1"]);
     }
 }

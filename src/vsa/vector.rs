@@ -10,7 +10,9 @@ pub trait Size: std::fmt::Debug + Copy + Eq {
     fn size(&self) -> usize;
 }
 
+/// A trait for fixed sizes.
 pub trait FixedSize: Default + Size {
+    /// The size as a compile-time constant.
     const SIZE: usize;
 }
 
@@ -80,10 +82,14 @@ impl<S: Size, V: VectorSymbolicArchitecture> PartialEq for Vector<S, V> {
 
 impl<S: Size, V: VectorSymbolicArchitecture> Eq for Vector<S, V> where V::Storage: Eq {}
 
-impl<'a, S: FixedSize, V: VectorSymbolicArchitecture> Add<&'a Self> for Vector<S, V> {
+impl<'a, S: Size, V: VectorSymbolicArchitecture> Add<&'a Self> for Vector<S, V> {
     type Output = Self;
 
     fn add(self, rhs: &'a Self) -> Self::Output {
+        assert_eq!(
+            self.size, rhs.size,
+            "cannot bundle vectors of different sizes"
+        );
         let data = self.vsa.bundle(&self.data, &rhs.data);
         Self {
             size: self.size,
@@ -93,14 +99,52 @@ impl<'a, S: FixedSize, V: VectorSymbolicArchitecture> Add<&'a Self> for Vector<S
     }
 }
 
-impl<'a, S: FixedSize, V: VectorSymbolicArchitecture> Mul<&'a Self> for Vector<S, V> {
+impl<'a, S: Size, V: VectorSymbolicArchitecture> Add<&'a Vector<S, V>> for &Vector<S, V> {
+    type Output = Vector<S, V>;
+
+    fn add(self, rhs: &'a Vector<S, V>) -> Self::Output {
+        assert_eq!(
+            self.size, rhs.size,
+            "cannot bundle vectors of different sizes"
+        );
+        let data = self.vsa.bundle(&self.data, &rhs.data);
+        Vector {
+            size: self.size,
+            vsa: self.vsa.clone(),
+            data,
+        }
+    }
+}
+
+impl<'a, S: Size, V: VectorSymbolicArchitecture> Mul<&'a Self> for Vector<S, V> {
     type Output = Self;
 
     fn mul(self, rhs: &'a Self) -> Self::Output {
+        assert_eq!(
+            self.size, rhs.size,
+            "cannot bind vectors of different sizes"
+        );
         let data = V::bind(&self.data, &rhs.data);
         Self {
             size: self.size,
             vsa: self.vsa,
+            data,
+        }
+    }
+}
+
+impl<'a, S: Size, V: VectorSymbolicArchitecture> Mul<&'a Vector<S, V>> for &Vector<S, V> {
+    type Output = Vector<S, V>;
+
+    fn mul(self, rhs: &'a Vector<S, V>) -> Self::Output {
+        assert_eq!(
+            self.size, rhs.size,
+            "cannot bind vectors of different sizes"
+        );
+        let data = V::bind(&self.data, &rhs.data);
+        Vector {
+            size: self.size,
+            vsa: self.vsa.clone(),
             data,
         }
     }
@@ -110,37 +154,6 @@ impl<S: Size, V: VectorSymbolicArchitecture> Vector<S, V> {
     /// Permute the vector.
     pub fn permute(self, shifts: usize) -> Self {
         let data = V::permute(&self.data, shifts);
-        Self {
-            size: self.size,
-            vsa: self.vsa,
-            data,
-        }
-    }
-}
-
-impl<'a, V: VectorSymbolicArchitecture> Add<&'a Self> for Vector<Dynamic, V> {
-    type Output = Self;
-
-    fn add(self, rhs: &'a Self) -> Self::Output {
-        assert_eq!(self.size, rhs.size, "cannot add vectors of different sizes");
-        let data = self.vsa.bundle(&self.data, &rhs.data);
-        Self {
-            size: self.size,
-            vsa: self.vsa,
-            data,
-        }
-    }
-}
-
-impl<'a, V: VectorSymbolicArchitecture> Mul<&'a Self> for Vector<Dynamic, V> {
-    type Output = Self;
-
-    fn mul(self, rhs: &'a Self) -> Self::Output {
-        assert_eq!(
-            self.size, rhs.size,
-            "cannot multiply vectors of different sizes"
-        );
-        let data = V::bind(&self.data, &rhs.data);
         Self {
             size: self.size,
             vsa: self.vsa,
