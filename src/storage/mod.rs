@@ -1,11 +1,18 @@
+mod queryable;
+mod selector;
+
 use std::{borrow::Cow, collections::HashMap};
 
 use polars::prelude::*;
 
 use crate::{Expression, Size, UnknownValue, Vector, architectures::VectorSymbolicArchitecture};
 
+pub use self::queryable::Queryable;
+pub use self::selector::Selector;
+
+/// A numerical ID for a vector in the storage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct VectorIndex(usize);
+pub struct VectorIndex(pub(crate) usize);
 
 #[derive(Debug, Clone)]
 struct NamedVectors<S: Size, V: VectorSymbolicArchitecture> {
@@ -43,7 +50,7 @@ impl<S: Size, V: VectorSymbolicArchitecture> NamedVectors<S, V> {
 }
 
 #[derive(Debug, Clone)]
-struct ColumnData {
+ struct ColumnData {
     vector: VectorIndex,
     column_type: ColumnType,
 }
@@ -59,12 +66,12 @@ enum ColumnType {
 
 /// A storage of (named) vectors related to a DataFrame.
 #[derive(Debug, Clone)]
-pub struct VectorStorage<S: Size, V: VectorSymbolicArchitecture> {
+pub struct Storage<S: Size, V: VectorSymbolicArchitecture> {
     vectors: NamedVectors<S, V>,
     columns: HashMap<String, ColumnData>,
 }
 
-impl<S: Size, V: VectorSymbolicArchitecture> VectorStorage<S, V> {
+impl<S: Size, V: VectorSymbolicArchitecture> Storage<S, V> {
     /// Create a new empty vector storage.
     pub fn new(vsa: V, size: S) -> Self {
         Self {
@@ -138,6 +145,14 @@ impl<S: Size, V: VectorSymbolicArchitecture> VectorStorage<S, V> {
         query.query(self)
     }
 
+    /// Retrieve multiple vectors from the storage using a selector.
+    pub fn get_multiple<'a, I: Selector<S, V>>(
+        &'a self,
+        selector: &'a I,
+    ) -> VectorIter<'a, S, V, I> {
+        VectorIter::new(self, selector)
+    }
+
     /// Query all known colums in the storage.
     pub fn columns(&self) -> impl Iterator<Item = Column<'_>> {
         self.columns.keys().map(|s| Column::from_str(s.as_str()))
@@ -160,31 +175,11 @@ impl<S: Size, V: VectorSymbolicArchitecture> VectorStorage<S, V> {
     }
 }
 
-impl<S: Size, V: VectorSymbolicArchitecture, Q: Queryable> std::ops::Index<Q>
-    for VectorStorage<S, V>
-{
+impl<S: Size, V: VectorSymbolicArchitecture, Q: Queryable> std::ops::Index<Q> for Storage<S, V> {
     type Output = Vector<S, V>;
 
     fn index(&self, query: Q) -> &Self::Output {
         query.query(self).expect("valid reference")
-    }
-}
-
-/// A queryable item for a vector storage.
-pub trait Queryable {
-    /// Try to query a vector from the storage.
-    fn query<'a, S: Size, V: VectorSymbolicArchitecture>(
-        &self,
-        storage: &'a VectorStorage<S, V>,
-    ) -> Option<&'a Vector<S, V>>;
-}
-
-impl Queryable for VectorIndex {
-    fn query<'a, S: Size, V: VectorSymbolicArchitecture>(
-        &self,
-        storage: &'a VectorStorage<S, V>,
-    ) -> Option<&'a Vector<S, V>> {
-        storage.vectors.get_by_index(*self)
     }
 }
 
@@ -217,18 +212,6 @@ impl std::fmt::Display for Column<'_> {
     }
 }
 
-impl<'s> Queryable for Column<'s> {
-    fn query<'a, S: Size, V: VectorSymbolicArchitecture>(
-        &self,
-        storage: &'a VectorStorage<S, V>,
-    ) -> Option<&'a Vector<S, V>> {
-        storage
-            .columns
-            .get(self.0.as_ref())
-            .and_then(|col| storage.vectors.get_by_index(col.vector))
-    }
-}
-
 /// A query for a specific value in a column.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Value<'s>(Cow<'s, str>);
@@ -258,51 +241,6 @@ impl std::fmt::Display for Value<'_> {
     }
 }
 
-impl<'s> Queryable for Value<'s> {
-    fn query<'a, S: Size, V: VectorSymbolicArchitecture>(
-        &self,
-        storage: &'a VectorStorage<S, V>,
-    ) -> Option<&'a Vector<S, V>> {
-        storage.vectors.get_by_name(self.0.as_ref())
-    }
-}
-
-impl<'s1, 's2> Queryable for (Column<'s1>, Value<'s2>) {
-    fn query<'a, S: Size, V: VectorSymbolicArchitecture>(
-        &self,
-        storage: &'a VectorStorage<S, V>,
-    ) -> Option<&'a Vector<S, V>> {
-        let column = storage.columns.get(self.0.0.as_ref())?;
-        match column.column_type {
-            ColumnType::String => {
-                // For string columns, we can directly query the value vector.
-                storage.vectors.get_by_name(self.1.0.as_ref())
-            }
-            ColumnType::Enum {
-                ref categories,
-                ref values,
-            } => {
-                // For enum columns, we check the existance.
-                let value_index = categories
-                    .categories()
-                    .iter()
-                    .position(|cat| cat == Some(self.1.0.as_ref()))?;
-                let vector_index = &values[value_index];
-                storage.vectors.vectors.get(vector_index.0)
-            }
-        }
-    }
-}
-
-impl Queryable for &str {
-    fn query<'a, S: Size, V: VectorSymbolicArchitecture>(
-        &self,
-        storage: &'a VectorStorage<S, V>,
-    ) -> Option<&'a Vector<S, V>> {
-        storage.vectors.get_by_name(self)
-    }
-}
-
 /// An error related to vector storage construction or querying.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StorageError {
@@ -327,6 +265,48 @@ impl std::fmt::Display for StorageError {
 
 impl std::error::Error for StorageError {}
 
+/// An iterator over vectors in the storage, selected by a selector.
+#[derive(Debug, Clone)]
+pub struct VectorIter<'a, S: Size, V: VectorSymbolicArchitecture, I: 'a + Selector<S, V>> {
+    storage: &'a Storage<S, V>,
+    iterator: I::Indices<'a>,
+}
+
+impl<'a, S: Size, V: VectorSymbolicArchitecture, I: 'a + Selector<S, V>> VectorIter<'a, S, V, I> {
+    fn new(storage: &'a Storage<S, V>, selector: &'a I) -> Self {
+        Self {
+            storage,
+            iterator: selector.select(storage),
+        }
+    }
+}
+
+impl<'a, S: Size, V: VectorSymbolicArchitecture, I: Selector<S, V>> Iterator
+    for VectorIter<'a, S, V, I>
+{
+    type Item = &'a Vector<S, V>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iterator
+            .next()
+            .map(|index| &self.storage.vectors.vectors[index.0])
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.iterator.size_hint()
+    }
+}
+
+impl<'a, S: Size, V: VectorSymbolicArchitecture, I: Selector<S, V>> ExactSizeIterator
+    for VectorIter<'a, S, V, I>
+where
+    I::Indices<'a>: ExactSizeIterator,
+{
+    fn len(&self) -> usize {
+        self.iterator.len()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -334,7 +314,7 @@ mod tests {
     #[test]
     fn test_construction_empty() {
         let vsa = crate::architectures::MultiplyAddPermute::<u8>::new(42);
-        let storage = VectorStorage::new(vsa, crate::Fixed::<128>);
+        let storage = Storage::new(vsa, crate::Fixed::<128>);
         assert!(storage.columns().next().is_none());
         assert!(storage.values().next().is_none());
     }
@@ -361,8 +341,8 @@ mod tests {
         .expect("valid dataframe");
 
         let vsa = crate::architectures::MultiplyAddPermute::<u8>::new(42);
-        let storage = VectorStorage::from_dataframe(vsa, crate::Fixed::<128>, df)
-            .expect("valid vector storage");
+        let storage =
+            Storage::from_dataframe(vsa, crate::Fixed::<128>, df).expect("valid vector storage");
 
         assert_eq!(storage.values().count(), 2 * 3 + 2);
         assert_eq!(storage.columns().count(), 2);
@@ -401,7 +381,7 @@ mod tests {
     #[test]
     fn test_push() {
         let vsa = crate::architectures::MultiplyAddPermute::<u8>::new(42);
-        let mut storage = VectorStorage::new(vsa, crate::Fixed::<128>);
+        let mut storage = Storage::new(vsa, crate::Fixed::<128>);
         storage.push("vec1");
         storage.push("vec2");
         storage.push("vec1");
@@ -415,7 +395,7 @@ mod tests {
     #[test]
     fn test_extend() {
         let vsa = crate::architectures::MultiplyAddPermute::<u8>::new(42);
-        let mut storage = VectorStorage::new(vsa, crate::Fixed::<128>);
+        let mut storage = Storage::new(vsa, crate::Fixed::<128>);
         storage.extend(["vec1", "vec1", "vec2"]);
 
         assert_ne!(storage["vec1"], storage["vec2"]);
@@ -427,11 +407,30 @@ mod tests {
     #[test]
     fn test_execute() {
         let vsa = crate::architectures::MultiplyAddPermute::<u8>::new(42);
-        let mut storage = VectorStorage::new(vsa, crate::Fixed::<128>);
+        let mut storage = Storage::new(vsa, crate::Fixed::<128>);
         storage.extend(["vec1", "vec2"]);
 
         let expr = Expression::new("vec1");
         let result = storage.execute(&expr).expect("expression should exist");
         assert_eq!(result.as_ref(), &storage["vec1"]);
+    }
+
+    #[test]
+    fn test_select_mutliple() {
+        let vsa = crate::architectures::MultiplyAddPermute::<u8>::new(42);
+        let mut storage = Storage::new(vsa, crate::Fixed::<128>);
+        storage.extend(["vec1", "vec2", "vec3"]);
+
+        let selector = ["vec1", "vec3"].as_slice();
+        let selected_1: Vec<_> = storage.get_multiple(&selector).collect();
+        assert_eq!(selected_1.len(), 2);
+        assert_eq!(selected_1[0], &storage["vec1"]);
+        assert_eq!(selected_1[1], &storage["vec3"]);
+
+        let selected_2: Vec<_> = storage.get_multiple(&()).collect();
+        assert_eq!(selected_2.len(), 3);
+        assert_eq!(selected_2[0], &storage["vec1"]);
+        assert_eq!(selected_2[1], &storage["vec2"]);
+        assert_eq!(selected_2[2], &storage["vec3"]);
     }
 }

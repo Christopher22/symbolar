@@ -13,9 +13,11 @@
 )]
 
 mod expression;
-mod vector_storage;
+mod storage;
 mod vsa;
 
 pub use self::expression::{Expression, ParseError, UnknownValue};
-pub use self::vector_storage::{Column, Queryable, StorageError, Value, VectorStorage};
+pub use self::storage::{
+    Column, Queryable, Selector, Storage, StorageError, Value, VectorIndex, VectorIter,
+};
 pub use self::vsa::*;
