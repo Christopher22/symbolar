@@ -2,6 +2,15 @@
 name = "polars-vsa"
 version = "0.3.1"
 edition = "2024"
+rust-version = "1.85"
+description = "Type-safe Vector Symbolic Architectures with Polars-backed storage and expression execution."
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/Christopher22/polars-vsa"
+homepage = "https://github.com/Christopher22/polars-vsa"
+documentation = "https://docs.rs/polars-vsa"
+keywords = ["vsa", "hyperdimensional", "polars", "symbolic", "vectors"]
+categories = ["algorithms", "data-structures", "science"]
 
 [dependencies]
 bitvec = "1.0.1"
