@@ -1,8 +1,10 @@
-use polars_vsa::{Expression, Fixed, Storage, architectures::BinarySpatterCode};
+use polars_vsa::{
+    Expression, Fixed, Storage,
+    architectures::{BinarySpatterCode, SelfInverseVectorSymbolicArchitecture},
+};
 
-#[test]
-fn test_dollar_mexico() {
-    let mut storage = Storage::new(BinarySpatterCode::<u8>::new(42), Fixed::<10000>);
+fn test_dollar_mexico<V: SelfInverseVectorSymbolicArchitecture>(v: V) {
+    let mut storage = Storage::new(v, Fixed::<10000>);
     storage.extend([
         "NAM", "MON", "CAP", // Features
         "USA", "DOL", "WDC", // USA
@@ -21,4 +23,9 @@ fn test_dollar_mexico() {
         .expect("at least one vector");
 
     assert_eq!(&storage[solution], &storage["PES"]);
+}
+
+#[test]
+fn test_dollar_mexico_bsc() {
+    test_dollar_mexico(BinarySpatterCode::<usize>::new(42));
 }

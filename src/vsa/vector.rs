@@ -1,8 +1,9 @@
-use super::architectures::VectorSymbolicArchitecture;
 use std::{
     num::NonZero,
     ops::{Add, Mul},
 };
+
+use super::architectures::VectorSymbolicArchitecture;
 
 /// A trait abtracting about dynamic and fixed sizes.
 pub trait Size: std::fmt::Debug + Copy + Eq {
@@ -87,13 +88,13 @@ impl<S: Size, V: VectorSymbolicArchitecture> Vector<S, V> {
         }
     }
 
-    /// Compute the cosine similarity between two vectors.
-    pub fn cosine_similarity(&self, other: &Self) -> f64 {
+    /// Compute the similarity between two vectors.
+    pub fn similarity(&self, other: &Self) -> f64 {
         assert_eq!(
             self.size, other.size,
             "cannot compute similarity of vectors of different sizes"
         );
-        V::cosine_similarity(&self.data, &other.data)
+        V::similarity(&self.data, &other.data)
     }
 }
 
@@ -113,7 +114,7 @@ impl<S: Size, V: VectorSymbolicArchitecture> PartialEq for Vector<S, V> {
 
 impl<S: Size, V: VectorSymbolicArchitecture> Eq for Vector<S, V> where V::Storage: Eq {}
 
-impl<'a, S: Size, V: VectorSymbolicArchitecture> Add<Self> for Vector<S, V> {
+impl<S: Size, V: VectorSymbolicArchitecture> Add<Self> for Vector<S, V> {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
@@ -164,7 +165,7 @@ impl<'a, S: Size, V: VectorSymbolicArchitecture> Add<&'a Vector<S, V>> for &Vect
     }
 }
 
-impl<'a, S: Size, V: VectorSymbolicArchitecture> Mul<Self> for Vector<S, V> {
+impl<S: Size, V: VectorSymbolicArchitecture> Mul<Self> for Vector<S, V> {
     type Output = Self;
 
     fn mul(self, rhs: Self) -> Self::Output {

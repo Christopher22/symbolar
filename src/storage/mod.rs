@@ -180,12 +180,9 @@ impl<S: Size, V: VectorSymbolicArchitecture> Storage<S, V> {
         vector: &'a Vector<S, V>,
         selector: &'a I,
     ) -> impl Iterator<Item = (VectorIndex, f64)> + 'a {
-        selector.select(self).map(|index| {
-            (
-                index,
-                vector.cosine_similarity(&self.vectors.vectors[index.0]),
-            )
-        })
+        selector
+            .select(self)
+            .map(|index| (index, vector.similarity(&self.vectors.vectors[index.0])))
     }
 
     /// Find the most similar vector to a given vector among those selected by a selector.

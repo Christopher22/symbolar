@@ -1,10 +1,12 @@
 use std::sync::Arc;
 
-use crate::vsa::architectures::Storage;
-
-use super::{UIntResolution, VectorSymbolicArchitecture};
 use bitvec::prelude::*;
-use rand::{RngExt, SeedableRng};
+use rand::SeedableRng;
+
+use super::{
+    PrimaryStorage, SelfInverseVectorSymbolicArchitecture, Storage, UIntResolution,
+    VectorSymbolicArchitecture,
+};
 
 /// Architecture based upon binary spatter codes.
 #[derive(Debug)]
@@ -19,31 +21,6 @@ impl<R: UIntResolution, Rng: rand::Rng> Clone for BinarySpatterCode<R, Rng> {
             resolution: std::marker::PhantomData,
             rng: self.rng.clone(),
         }
-    }
-}
-
-impl<R: UIntResolution, Rng: rand::Rng> BinarySpatterCode<R, Rng> {
-    fn random_bits(&self, size: usize) -> BitVec<R, Lsb0> {
-        let mut rng = self.rng.write();
-        let mut out = BitVec::with_capacity(size);
-        let words = size / 64;
-
-        for _ in 0..words {
-            let word: u64 = rng.random();
-            for bit in 0..64 {
-                out.push(((word >> bit) & 1) == 1);
-            }
-        }
-
-        let remaining = size % 64;
-        if remaining > 0 {
-            let word: u64 = rng.random();
-            for bit in 0..remaining {
-                out.push(((word >> bit) & 1) == 1);
-            }
-        }
-
-        out
     }
 }
 
@@ -65,14 +42,14 @@ impl<R: UIntResolution, Rng: rand::Rng + SeedableRng> Default for BinarySpatterC
 
 impl<R, Rng> VectorSymbolicArchitecture for BinarySpatterCode<R, Rng>
 where
-    R: UIntResolution + From<u8> + PartialEq + Copy,
+    R: UIntResolution,
     Rng: rand::Rng,
 {
     type Storage = BitVec<R, Lsb0>;
     type StorageMulti = BitVec<R, Lsb0>;
 
     fn random(&self, size: usize) -> Self::Storage {
-        self.random_bits(size)
+        BitVec::random(&mut self.rng.write(), size)
     }
 
     fn normalize(&self, storage: Self::StorageMulti) -> Self::Storage {
@@ -100,7 +77,7 @@ where
         let mut ties = a.clone();
         ties ^= b.as_bitslice();
 
-        let mut tiebreaker = self.random_bits(a.len());
+        let mut tiebreaker = BitVec::<R, Lsb0>::random(&mut self.rng.write(), a.len());
         tiebreaker &= ties.as_bitslice();
 
         out |= tiebreaker.as_bitslice();
@@ -127,7 +104,7 @@ where
         a.clone()
     }
 
-    fn cosine_similarity(a: &Self::Storage, b: &Self::Storage) -> f64 {
+    fn similarity(a: &Self::Storage, b: &Self::Storage) -> f64 {
         a.enforce_constraints(b);
 
         let dim = a.len() as f64;
@@ -137,6 +114,13 @@ where
         let dot = dim - 2.0 * mismatches;
         dot / dim
     }
+}
+
+impl<R, Rng> SelfInverseVectorSymbolicArchitecture for BinarySpatterCode<R, Rng>
+where
+    R: UIntResolution + From<u8> + PartialEq + Copy,
+    Rng: rand::Rng,
+{
 }
 
 #[cfg(test)]
@@ -205,8 +189,8 @@ mod tests {
         let b_opposite: BitVec<u8, Lsb0> = bitvec![u8, Lsb0; 0, 0, 1, 1];
         let b_half: BitVec<u8, Lsb0> = bitvec![u8, Lsb0; 1, 0, 0, 1];
 
-        assert!((BinarySpatterCode::<u8>::cosine_similarity(&a, &b_same) - 1.0).abs() < 1e-12);
-        assert!((BinarySpatterCode::<u8>::cosine_similarity(&a, &b_opposite) + 1.0).abs() < 1e-12);
-        assert!(BinarySpatterCode::<u8>::cosine_similarity(&a, &b_half).abs() < 1e-12);
+        assert!((BinarySpatterCode::<u8>::similarity(&a, &b_same) - 1.0).abs() < 1e-12);
+        assert!((BinarySpatterCode::<u8>::similarity(&a, &b_opposite) + 1.0).abs() < 1e-12);
+        assert!(BinarySpatterCode::<u8>::similarity(&a, &b_half).abs() < 1e-12);
     }
 }
