@@ -17,8 +17,20 @@ pub trait FixedSize: Default + Size {
 }
 
 /// A vector with a fixed size.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub struct Fixed<const N: usize>;
+
+impl<const N: usize> std::fmt::Debug for Fixed<N> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", N)
+    }
+}
+
+impl<const N: usize> std::fmt::Display for Fixed<N> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", N)
+    }
+}
 
 impl<const N: usize> Size for Fixed<N> {
     fn size(&self) -> usize {
@@ -64,6 +76,25 @@ impl<S: Size, V: VectorSymbolicArchitecture> Vector<S, V> {
             data,
         }
     }
+
+    /// Permute the vector.
+    pub fn permute(self, shifts: usize) -> Self {
+        let data = V::permute(&self.data, shifts);
+        Self {
+            size: self.size,
+            vsa: self.vsa,
+            data,
+        }
+    }
+
+    /// Compute the cosine similarity between two vectors.
+    pub fn cosine_similarity(&self, other: &Self) -> f64 {
+        assert_eq!(
+            self.size, other.size,
+            "cannot compute similarity of vectors of different sizes"
+        );
+        V::cosine_similarity(&self.data, &other.data)
+    }
 }
 
 impl<S: Size, V: VectorSymbolicArchitecture> std::fmt::Debug for Vector<S, V> {
@@ -81,6 +112,23 @@ impl<S: Size, V: VectorSymbolicArchitecture> PartialEq for Vector<S, V> {
 }
 
 impl<S: Size, V: VectorSymbolicArchitecture> Eq for Vector<S, V> where V::Storage: Eq {}
+
+impl<'a, S: Size, V: VectorSymbolicArchitecture> Add<Self> for Vector<S, V> {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        assert_eq!(
+            self.size, rhs.size,
+            "cannot bundle vectors of different sizes"
+        );
+        let data = self.vsa.bundle(&self.data, &rhs.data);
+        Self {
+            size: self.size,
+            vsa: self.vsa,
+            data,
+        }
+    }
+}
 
 impl<'a, S: Size, V: VectorSymbolicArchitecture> Add<&'a Self> for Vector<S, V> {
     type Output = Self;
@@ -116,6 +164,23 @@ impl<'a, S: Size, V: VectorSymbolicArchitecture> Add<&'a Vector<S, V>> for &Vect
     }
 }
 
+impl<'a, S: Size, V: VectorSymbolicArchitecture> Mul<Self> for Vector<S, V> {
+    type Output = Self;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        assert_eq!(
+            self.size, rhs.size,
+            "cannot bind vectors of different sizes"
+        );
+        let data = V::bind(&self.data, &rhs.data);
+        Self {
+            size: self.size,
+            vsa: self.vsa,
+            data,
+        }
+    }
+}
+
 impl<'a, S: Size, V: VectorSymbolicArchitecture> Mul<&'a Self> for Vector<S, V> {
     type Output = Self;
 
@@ -145,18 +210,6 @@ impl<'a, S: Size, V: VectorSymbolicArchitecture> Mul<&'a Vector<S, V>> for &Vect
         Vector {
             size: self.size,
             vsa: self.vsa.clone(),
-            data,
-        }
-    }
-}
-
-impl<S: Size, V: VectorSymbolicArchitecture> Vector<S, V> {
-    /// Permute the vector.
-    pub fn permute(self, shifts: usize) -> Self {
-        let data = V::permute(&self.data, shifts);
-        Self {
-            size: self.size,
-            vsa: self.vsa,
             data,
         }
     }

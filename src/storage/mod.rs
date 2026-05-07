@@ -50,7 +50,7 @@ impl<S: Size, V: VectorSymbolicArchitecture> NamedVectors<S, V> {
 }
 
 #[derive(Debug, Clone)]
- struct ColumnData {
+struct ColumnData {
     vector: VectorIndex,
     column_type: ColumnType,
 }
@@ -172,6 +172,31 @@ impl<S: Size, V: VectorSymbolicArchitecture> Storage<S, V> {
         expression: &'y Expression,
     ) -> Result<Cow<'x, Vector<S, V>>, UnknownValue> {
         expression.evaluate(|name| self.get(&name).map(Cow::Borrowed))
+    }
+
+    /// Compute the cosine similarity between a given vector and all vectors selected by a selector.
+    pub fn cosine_similarities<'a, I: Selector<S, V> + 'a>(
+        &'a self,
+        vector: &'a Vector<S, V>,
+        selector: &'a I,
+    ) -> impl Iterator<Item = (VectorIndex, f64)> + 'a {
+        selector.select(self).map(|index| {
+            (
+                index,
+                vector.cosine_similarity(&self.vectors.vectors[index.0]),
+            )
+        })
+    }
+
+    /// Find the most similar vector to a given vector among those selected by a selector.
+    pub fn find<I: Selector<S, V>>(
+        &self,
+        vector: &Vector<S, V>,
+        selector: &I,
+    ) -> Option<VectorIndex> {
+        self.cosine_similarities(vector, selector)
+            .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+            .map(|(index, _)| index)
     }
 }
 
