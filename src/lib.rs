@@ -16,7 +16,7 @@ mod expression;
 mod storage;
 mod vsa;
 
-pub use self::expression::{Expression, ParseError, UnknownValue};
+pub use self::expression::{EvaluateOps, Expression, ParseError, UnknownValue};
 pub use self::storage::{
     Column, Queryable, Selector, Storage, StorageError, Value, VectorIndex, VectorIter,
 };

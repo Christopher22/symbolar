@@ -14,8 +14,8 @@ use self::parser::Parser;
 pub enum Expression {
     /// A value.
     Value(Cow<'static, str>),
-    /// The sum of two expressions.
-    Plus(Box<Expression>, Box<Expression>),
+    /// The sum of two or more expressions.
+    Plus(Vec<Expression>),
     /// The product of two expressions.
     Mul(Box<Expression>, Box<Expression>),
 }
@@ -34,25 +34,25 @@ impl Expression {
     /// Evaluate the expression given a variable mapping.
     pub fn evaluate<'a, T, C>(&'a self, variables: C) -> Result<Cow<'a, T>, UnknownValue>
     where
-        T: Clone,
+        T: EvaluateOps,
         C: Copy + Fn(&str) -> Option<Cow<'a, T>>,
-        for<'x, 'y> &'x T: Add<&'y T, Output = T>,
-        for<'x, 'y> &'x T: Mul<&'y T, Output = T>,
     {
         match self {
             Expression::Value(val) => {
                 let val = val.as_ref();
                 variables(val).ok_or_else(|| UnknownValue::from(val))
             }
-            Expression::Plus(lhs, rhs) => {
-                let l = lhs.evaluate(variables)?;
-                let r = rhs.evaluate(variables)?;
-                Ok(Cow::Owned(&*l + &*r))
+            Expression::Plus(terms) => {
+                let values = terms
+                    .iter()
+                    .map(|term| term.evaluate(variables))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(Cow::Owned(T::add_many(values.iter().map(|v| v.as_ref()))))
             }
             Expression::Mul(lhs, rhs) => {
-                let l = lhs.evaluate(variables)?;
-                let r = rhs.evaluate(variables)?;
-                Ok(Cow::Owned(&*l * &*r))
+                let l = lhs.evaluate(variables)?.into_owned();
+                let r = rhs.evaluate(variables)?.into_owned();
+                Ok(Cow::Owned(T::multiply(&l, &r)))
             }
         }
     }
@@ -62,7 +62,21 @@ impl Add for Expression {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
-        Expression::Plus(Box::new(self), Box::new(rhs))
+        match (self, rhs) {
+            (Expression::Plus(mut left), Expression::Plus(right)) => {
+                left.extend(right);
+                Expression::Plus(left)
+            }
+            (Expression::Plus(mut left), right) => {
+                left.push(right);
+                Expression::Plus(left)
+            }
+            (left, Expression::Plus(mut right)) => {
+                right.insert(0, left);
+                Expression::Plus(right)
+            }
+            (left, right) => Expression::Plus(vec![left, right]),
+        }
     }
 }
 
@@ -79,9 +93,23 @@ impl PartialEq<Expression> for Expression {
         // Ensure commutative property
         match (self, other) {
             (Expression::Value(val), Expression::Value(other_val)) => val == other_val,
-            (Expression::Plus(lhs, rhs), Expression::Plus(other_lhs, other_rhs)) => {
-                (lhs.as_ref() == other_lhs.as_ref() && rhs.as_ref() == other_rhs.as_ref())
-                    || (lhs.as_ref() == other_rhs.as_ref() && rhs.as_ref() == other_lhs.as_ref())
+            (Expression::Plus(terms), Expression::Plus(other_terms)) => {
+                if terms.len() != other_terms.len() {
+                    return false;
+                }
+
+                let mut used = vec![false; other_terms.len()];
+                'outer: for term in terms {
+                    for (idx, other_term) in other_terms.iter().enumerate() {
+                        if !used[idx] && term == other_term {
+                            used[idx] = true;
+                            continue 'outer;
+                        }
+                    }
+                    return false;
+                }
+
+                true
             }
             (Expression::Mul(lhs, rhs), Expression::Mul(other_lhs, other_rhs)) => {
                 (lhs.as_ref() == other_lhs.as_ref() && rhs.as_ref() == other_rhs.as_ref())
@@ -101,14 +129,17 @@ impl Hash for Expression {
                 state.write_u8(0);
                 val.hash(state);
             }
-            Expression::Plus(lhs, rhs) => {
+            Expression::Plus(terms) => {
                 state.write_u8(1);
                 // Commutative hash: ensure order doesn't matter
-                let mut h1 = std::collections::hash_map::DefaultHasher::new();
-                lhs.hash(&mut h1);
-                let mut h2 = std::collections::hash_map::DefaultHasher::new();
-                rhs.hash(&mut h2);
-                state.write_u64(h1.finish().wrapping_add(h2.finish()));
+                let mut sum = 0u64;
+                for term in terms {
+                    let mut h = std::collections::hash_map::DefaultHasher::new();
+                    term.hash(&mut h);
+                    sum = sum.wrapping_add(h.finish());
+                }
+                state.write_usize(terms.len());
+                state.write_u64(sum);
             }
             Expression::Mul(lhs, rhs) => {
                 state.write_u8(2);
@@ -127,7 +158,16 @@ impl std::fmt::Display for Expression {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Expression::Value(val) => write!(f, "{}", val),
-            Expression::Plus(lhs, rhs) => write!(f, "({} + {})", lhs, rhs),
+            Expression::Plus(terms) => {
+                write!(f, "(")?;
+                for (idx, term) in terms.iter().enumerate() {
+                    if idx > 0 {
+                        write!(f, " + ")?;
+                    }
+                    write!(f, "{}", term)?;
+                }
+                write!(f, ")")
+            }
             Expression::Mul(lhs, rhs) => write!(f, "({} * {})", lhs, rhs),
         }
     }
@@ -165,6 +205,44 @@ impl std::fmt::Display for UnknownValue {
 
 impl std::error::Error for UnknownValue {}
 
+/// Operations required to evaluate an expression.
+pub trait EvaluateOps: Clone {
+    /// Combine multiple values as an addition expression.
+    fn add_many<'a, I>(values: I) -> Self
+    where
+        I: ExactSizeIterator<Item = &'a Self>,
+        Self: 'a;
+
+    /// Multiply two values.
+    fn multiply(lhs: &Self, rhs: &Self) -> Self;
+}
+
+macro_rules! impl_evaluate_ops_numeric {
+    ($($t:ty),+ $(,)?) => {
+        $(
+            impl EvaluateOps for $t {
+                fn add_many<'a, I>(mut values: I) -> Self
+                where
+                    I: ExactSizeIterator<Item = &'a Self>,
+                    Self: 'a,
+                {
+                    let mut acc = *values.next().expect("plus has at least one term");
+                    for value in values {
+                        acc += *value;
+                    }
+                    acc
+                }
+
+                fn multiply(lhs: &Self, rhs: &Self) -> Self {
+                    *lhs * *rhs
+                }
+            }
+        )+
+    };
+}
+
+impl_evaluate_ops_numeric!(u8, u16, u32, u64, usize, i8, i16, i32, i64, isize, f32, f64);
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -179,7 +257,7 @@ mod tests {
         assert_eq!("((a * b) + (c * d))", expr2.to_string());
 
         let expr3 = Expression::new("a") + Expression::new("b") + Expression::new("c");
-        assert_eq!("((a + b) + c)", expr3.to_string());
+        assert_eq!("(a + b + c)", expr3.to_string());
 
         let expr4 = (Expression::new("a") + Expression::new("b")) * Expression::new("c");
         assert_eq!("((a + b) * c)", expr4.to_string());
@@ -271,6 +349,16 @@ mod tests {
         assert_eq!(
             "1 + * 2".parse::<Expression>(),
             Err(ParseError::UnexpectedToken("*".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_parsing_multiple_additions() {
+        assert_eq!(
+            "1 + 2 + 3 * 4 + (5 * 6 + 7)"
+                .parse::<Expression>()
+                .map(|expr| expr.to_string()),
+            Ok("(1 + 2 + (3 * 4) + ((5 * 6) + 7))".to_string())
         );
     }
 }

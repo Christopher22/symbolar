@@ -57,7 +57,7 @@ where
     }
 
     fn bundle(&self, a: &Self::Storage, b: &Self::Storage) -> Self::Storage {
-        self.bundle_multi(a, b)
+        self.bundle_multi([a, b].into_iter()).expect("two vectors")
     }
 
     fn bind(a: &Self::Storage, b: &Self::Storage) -> Self::Storage {
@@ -68,20 +68,46 @@ where
         out
     }
 
-    fn bundle_multi(&self, a: &Self::Storage, b: &Self::Storage) -> Self::StorageMulti {
-        a.enforce_constraints(b);
+    fn bundle_multi<'a, I>(&self, mut vectors: I) -> Option<Self::StorageMulti>
+    where
+        I: Iterator<Item = &'a Self::Storage>,
+        Self::Storage: 'a,
+    {
+        let first = vectors.next()?;
+        let len = first.len();
+        let mut ones = vec![0; len];
+        let mut total = 1usize;
 
-        let mut out = a.clone();
-        out &= b.as_bitslice();
+        for (idx, bit) in first.iter().by_vals().enumerate() {
+            ones[idx] += usize::from(bit);
+        }
 
-        let mut ties = a.clone();
-        ties ^= b.as_bitslice();
+        for vector in vectors {
+            first.enforce_constraints(vector);
+            total += 1;
+            for (idx, bit) in vector.iter().by_vals().enumerate() {
+                ones[idx] += usize::from(bit);
+            }
+        }
 
-        let mut tiebreaker = BitVec::<R, Lsb0>::random(&mut self.rng.write(), a.len());
-        tiebreaker &= ties.as_bitslice();
+        if total < 2 {
+            return None;
+        }
 
-        out |= tiebreaker.as_bitslice();
-        out
+        let half = total / 2;
+        let tiebreaker = BitVec::<R, Lsb0>::random(&mut self.rng.write(), len);
+        let mut out = BitVec::with_capacity(len);
+        for (idx, count) in ones.into_iter().enumerate() {
+            if count > half {
+                out.push(true);
+            } else if count < half || total % 2 == 1 {
+                out.push(false);
+            } else {
+                out.push(tiebreaker[idx]);
+            }
+        }
+
+        Some(out)
     }
 
     fn permute(a: &Self::Storage, shifts: usize) -> Self::Storage {

@@ -21,11 +21,14 @@ pub trait VectorSymbolicArchitecture: Clone {
 
     /// Normalize a multi-vector.
     fn normalize(&self, storage: Self::StorageMulti) -> Self::Storage;
-    /// Bundle two vectors.
-    fn bundle_multi(&self, a: &Self::Storage, b: &Self::Storage) -> Self::StorageMulti;
+    /// Bundle at least two vectors.
+    fn bundle_multi<'a, I>(&self, vectors: I) -> Option<Self::StorageMulti>
+    where
+        I: Iterator<Item = &'a Self::Storage>,
+        Self::Storage: 'a;
     /// Bundle a vector and normalize it.
     fn bundle(&self, a: &Self::Storage, b: &Self::Storage) -> Self::Storage {
-        self.normalize(self.bundle_multi(a, b))
+        self.normalize(self.bundle_multi([a, b].into_iter()).expect("two vectors"))
     }
 
     /// Bind two vectors.
@@ -131,11 +134,18 @@ impl<R: Resolution> Storage for Vec<R> {
 pub trait Resolution: std::fmt::Debug + Clone + Copy + PartialEq {
     /// The identity element for the resolution.
     const IDENTITY: Self;
+    /// The zero element for the resolution.
+    const ZERO: Self;
 }
 
 /// A resolution of a data type limited to (positive and negative) integers.
 pub trait IntResolution:
-    Resolution + Ord + Eq + std::ops::Neg<Output = Self> + std::ops::Add<Output = Self>
+    Resolution
+    + Ord
+    + Eq
+    + std::ops::Neg<Output = Self>
+    + std::ops::Add<Output = Self>
+    + std::ops::AddAssign
 {
 }
 
@@ -144,50 +154,60 @@ pub trait UIntResolution: Resolution + bitvec::store::BitStore + Ord + Eq {}
 
 impl Resolution for u8 {
     const IDENTITY: Self = 1;
+    const ZERO: Self = 0;
 }
 impl UIntResolution for u8 {}
 
 impl Resolution for i8 {
     const IDENTITY: Self = 1;
+    const ZERO: Self = 0;
 }
 impl IntResolution for i8 {}
 
 impl Resolution for u16 {
     const IDENTITY: Self = 1;
+    const ZERO: Self = 0;
 }
 impl UIntResolution for u16 {}
 
 impl Resolution for i16 {
     const IDENTITY: Self = 1;
+    const ZERO: Self = 0;
 }
 impl IntResolution for i16 {}
 
 impl Resolution for u32 {
     const IDENTITY: Self = 1;
+    const ZERO: Self = 0;
 }
 impl UIntResolution for u32 {}
 
 impl Resolution for i32 {
     const IDENTITY: Self = 1;
+    const ZERO: Self = 0;
 }
 impl IntResolution for i32 {}
 
 impl Resolution for u64 {
     const IDENTITY: Self = 1;
+    const ZERO: Self = 0;
 }
 impl UIntResolution for u64 {}
 
 impl Resolution for i64 {
     const IDENTITY: Self = 1;
+    const ZERO: Self = 0;
 }
 impl IntResolution for i64 {}
 
 impl Resolution for usize {
     const IDENTITY: Self = 1;
+    const ZERO: Self = 0;
 }
 impl UIntResolution for usize {}
 
 impl Resolution for isize {
     const IDENTITY: Self = 1;
+    const ZERO: Self = 0;
 }
 impl IntResolution for isize {}

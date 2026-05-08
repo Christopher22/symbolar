@@ -67,14 +67,8 @@ pub struct MultiplyAddPermute<
 }
 
 impl<R: UIntResolution, RM: IntResolution, Rng: rand::Rng> MultiplyAddPermute<R, RM, Rng> {
-    fn add_bits(x: bool, y: bool) -> RM {
-        (match x {
-            true => RM::IDENTITY,
-            false => -RM::IDENTITY,
-        }) + (match y {
-            true => RM::IDENTITY,
-            false => -RM::IDENTITY,
-        })
+    fn bit_to_resolution(bit: bool) -> RM {
+        if bit { RM::IDENTITY } else { -RM::IDENTITY }
     }
 }
 
@@ -125,12 +119,33 @@ impl<R: UIntResolution, RM: IntResolution, Rng: rand::Rng> VectorSymbolicArchite
         PlusMinusOnes::random(&mut self.rng.write(), size)
     }
 
-    fn bundle_multi(&self, a: &Self::Storage, b: &Self::Storage) -> Self::StorageMulti {
-        a.enforce_constraints(b);
-        a.0.iter()
-            .zip(b.0.iter())
-            .map(|(x, y)| Self::add_bits(*x, *y))
-            .collect()
+    fn bundle_multi<'a, I>(&self, mut vectors: I) -> Option<Self::StorageMulti>
+    where
+        I: Iterator<Item = &'a Self::Storage>,
+        Self::Storage: 'a,
+    {
+        let first = vectors.next()?;
+        let len = first.len();
+        let mut out = vec![RM::ZERO; len];
+        let mut total = 1usize;
+
+        for (sum, bit) in out.iter_mut().zip(first.0.iter().by_vals()) {
+            *sum += Self::bit_to_resolution(bit);
+        }
+
+        for vector in vectors {
+            first.enforce_constraints(vector);
+            total += 1;
+            for (sum, bit) in out.iter_mut().zip(vector.0.iter().by_vals()) {
+                *sum += Self::bit_to_resolution(bit);
+            }
+        }
+
+        if total < 2 {
+            return None;
+        }
+
+        Some(out)
     }
 
     fn bind(a: &Self::Storage, b: &Self::Storage) -> Self::Storage {

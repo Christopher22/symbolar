@@ -3,7 +3,7 @@ use std::{
     ops::{Add, Mul},
 };
 
-use super::architectures::VectorSymbolicArchitecture;
+use crate::{EvaluateOps, architectures::VectorSymbolicArchitecture};
 
 /// A trait abtracting about dynamic and fixed sizes.
 pub trait Size: std::fmt::Debug + Copy + Eq {
@@ -95,6 +95,34 @@ impl<S: Size, V: VectorSymbolicArchitecture> Vector<S, V> {
             "cannot compute similarity of vectors of different sizes"
         );
         V::similarity(&self.data, &other.data)
+    }
+}
+
+impl<S: Size, V: VectorSymbolicArchitecture> EvaluateOps for Vector<S, V> {
+    fn add_many<'a, I>(mut values: I) -> Self
+    where
+        I: ExactSizeIterator<Item = &'a Self>,
+        Self: 'a,
+    {
+        let first = values.next().expect("plus has at least one term");
+        if values.len() == 0 {
+            return first.clone();
+        }
+
+        let storage = first
+            .vsa
+            .bundle_multi(std::iter::once(&first.data).chain(values.map(|value| &value.data)))
+            .expect("plus has at least two compatible terms");
+
+        Self {
+            size: first.size,
+            vsa: first.vsa.clone(),
+            data: first.vsa.normalize(storage),
+        }
+    }
+
+    fn multiply(lhs: &Self, rhs: &Self) -> Self {
+        lhs * rhs
     }
 }
 

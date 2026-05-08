@@ -55,14 +55,18 @@ impl Parser {
 
     /// Level 1: Addition (lowest precedence)
     fn parse_add(&mut self) -> Result<Expression, ParseError> {
-        let mut left = self.parse_mul()?;
+        let mut terms = vec![self.parse_mul()?];
 
         while self.pos < self.tokens.len() && self.tokens[self.pos] == "+" {
             self.pos += 1; // consume '+'
-            let right = self.parse_mul()?;
-            left = Expression::Plus(Box::new(left), Box::new(right));
+            terms.push(self.parse_mul()?);
         }
-        Ok(left)
+
+        if terms.len() == 1 {
+            Ok(terms.remove(0))
+        } else {
+            Ok(Expression::Plus(terms))
+        }
     }
 
     /// Level 2: Multiplication

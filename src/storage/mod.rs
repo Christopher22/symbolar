@@ -72,6 +72,13 @@ pub struct Storage<S: Size, V: VectorSymbolicArchitecture> {
 }
 
 impl<S: Size, V: VectorSymbolicArchitecture> Storage<S, V> {
+    fn execute_expression<'x, 'y: 'x>(
+        &'x self,
+        expression: &'y Expression,
+    ) -> Result<Cow<'x, Vector<S, V>>, UnknownValue> {
+        expression.evaluate(|name| self.get(&name).map(Cow::Borrowed))
+    }
+
     /// Create a new empty vector storage.
     pub fn new(vsa: V, size: S) -> Self {
         Self {
@@ -171,7 +178,7 @@ impl<S: Size, V: VectorSymbolicArchitecture> Storage<S, V> {
         &'x self,
         expression: &'y Expression,
     ) -> Result<Cow<'x, Vector<S, V>>, UnknownValue> {
-        expression.evaluate(|name| self.get(&name).map(Cow::Borrowed))
+        self.execute_expression(expression)
     }
 
     /// Compute the cosine similarity between a given vector and all vectors selected by a selector.

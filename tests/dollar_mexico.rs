@@ -29,3 +29,10 @@ fn test_dollar_mexico<V: SelfInverseVectorSymbolicArchitecture>(v: V) {
 fn test_dollar_mexico_bsc() {
     test_dollar_mexico(BinarySpatterCode::<usize>::new(42));
 }
+
+#[test]
+fn test_dollar_mexico_map() {
+    test_dollar_mexico(polars_vsa::architectures::MultiplyAddPermute::<usize>::new(
+        42,
+    ));
+}
