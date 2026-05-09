@@ -63,11 +63,15 @@ impl Size for Dynamic {
 pub struct Vector<S: Size, V: VectorSymbolicArchitecture> {
     /// The size of the vector.
     pub size: S,
-    vsa: V,
-    data: V::Storage,
+    pub(crate) vsa: V,
+    pub(crate) data: V::Storage,
 }
 
 impl<S: Size, V: VectorSymbolicArchitecture> Vector<S, V> {
+    pub(crate) fn new(vsa: V, size: S, data: V::Storage) -> Self {
+        Self { size, vsa, data }
+    }
+
     /// Create a random vector.
     pub fn random(vsa: &V, size: S) -> Self {
         let data = vsa.random(size.size());

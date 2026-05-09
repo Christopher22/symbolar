@@ -1,5 +1,6 @@
 mod queryable;
 mod selector;
+mod subset;
 
 use std::{borrow::Cow, collections::HashMap};
 
@@ -9,9 +10,10 @@ use crate::{Expression, Size, UnknownValue, Vector, architectures::VectorSymboli
 
 pub use self::queryable::Queryable;
 pub use self::selector::Selector;
+pub use self::subset::{Error as SubsetError, Subset};
 
 /// A numerical ID for a vector in the storage.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct VectorIndex(pub(crate) usize);
 
 #[derive(Debug, Clone)]
@@ -88,7 +90,7 @@ impl<S: Size, V: VectorSymbolicArchitecture> Storage<S, V> {
     }
 
     /// Create a new vector storage from a DataFrame.
-    pub fn from_dataframe(vsa: V, size: S, dataframe: DataFrame) -> Result<Self, StorageError> {
+    pub fn from_dataframe(vsa: V, size: S, dataframe: &DataFrame) -> Result<Self, StorageError> {
         let mut vectors = NamedVectors::new(vsa, size);
         let mut columns = HashMap::new();
 
@@ -132,6 +134,11 @@ impl<S: Size, V: VectorSymbolicArchitecture> Storage<S, V> {
         }
 
         Ok(Self { vectors, columns })
+    }
+
+    /// Create a subset of the storage corresponding to a specific DataFrame.
+    pub fn subset<'a>(&'a self, dataframe: &DataFrame) -> Result<Subset<'a, S, V>, SubsetError> {
+        Subset::new(self, dataframe)
     }
 
     /// Add a new vector with the given name to the storage. If it already exists, return the existing vector.
@@ -350,10 +357,8 @@ mod tests {
 
     #[test]
     fn test_construction_from_dataframe() {
-        let enum_dtype = DataType::Enum(
-            FrozenCategories::new(vec!["circle".into(), "square".into(), "triangle".into()])
-                .unwrap(),
-            Arc::new(CategoricalMapping::with_hasher(3, Default::default())),
+        let enum_dtype = DataType::from_frozen_categories(
+            FrozenCategories::new(vec!["circle", "square", "triangle"]).unwrap(),
         );
 
         let df = DataFrame::new(
@@ -371,7 +376,7 @@ mod tests {
 
         let vsa = crate::architectures::MultiplyAddPermute::<u8>::new(42);
         let storage =
-            Storage::from_dataframe(vsa, crate::Fixed::<128>, df).expect("valid vector storage");
+            Storage::from_dataframe(vsa, crate::Fixed::<128>, &df).expect("valid vector storage");
 
         assert_eq!(storage.values().count(), 2 * 3 + 2);
         assert_eq!(storage.columns().count(), 2);

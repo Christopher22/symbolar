@@ -18,6 +18,7 @@ mod vsa;
 
 pub use self::expression::{EvaluateOps, Expression, ParseError, UnknownValue};
 pub use self::storage::{
-    Column, Queryable, Selector, Storage, StorageError, Value, VectorIndex, VectorIter,
+    Column, Queryable, Selector, Storage, StorageError, Subset, SubsetError, Value, VectorIndex,
+    VectorIter,
 };
 pub use self::vsa::*;

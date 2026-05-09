@@ -119,12 +119,12 @@ impl<R: UIntResolution, RM: IntResolution, Rng: rand::Rng> VectorSymbolicArchite
         PlusMinusOnes::random(&mut self.rng.write(), size)
     }
 
-    fn bundle_multi<'a, I>(&self, mut vectors: I) -> Option<Self::StorageMulti>
+    fn bundle_multi<I>(&self, mut vectors: impl Iterator<Item = I>) -> Option<Self::StorageMulti>
     where
-        I: Iterator<Item = &'a Self::Storage>,
-        Self::Storage: 'a,
+        I: std::borrow::Borrow<Self::Storage>,
     {
-        let first = vectors.next()?;
+        let first_borrowed = vectors.next()?;
+        let first = first_borrowed.borrow();
         let len = first.len();
         let mut out = vec![RM::ZERO; len];
         let mut total = 1usize;
@@ -133,7 +133,8 @@ impl<R: UIntResolution, RM: IntResolution, Rng: rand::Rng> VectorSymbolicArchite
             *sum += Self::bit_to_resolution(bit);
         }
 
-        for vector in vectors {
+        for vector_borrowed in vectors {
+            let vector = vector_borrowed.borrow();
             first.enforce_constraints(vector);
             total += 1;
             for (sum, bit) in out.iter_mut().zip(vector.0.iter().by_vals()) {

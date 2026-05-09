@@ -5,6 +5,7 @@ mod map;
 
 use bitvec::vec::BitVec;
 use rand::RngExt;
+use std::borrow::Borrow;
 
 pub use self::bsc::BinarySpatterCode;
 pub use self::map::{MultiplyAddPermute, PlusMinusOnes};
@@ -22,10 +23,10 @@ pub trait VectorSymbolicArchitecture: Clone {
     /// Normalize a multi-vector.
     fn normalize(&self, storage: Self::StorageMulti) -> Self::Storage;
     /// Bundle at least two vectors.
-    fn bundle_multi<'a, I>(&self, vectors: I) -> Option<Self::StorageMulti>
+    fn bundle_multi<I>(&self, vectors: impl Iterator<Item = I>) -> Option<Self::StorageMulti>
     where
-        I: Iterator<Item = &'a Self::Storage>,
-        Self::Storage: 'a;
+        I: Borrow<Self::Storage>;
+
     /// Bundle a vector and normalize it.
     fn bundle(&self, a: &Self::Storage, b: &Self::Storage) -> Self::Storage {
         self.normalize(self.bundle_multi([a, b].into_iter()).expect("two vectors"))

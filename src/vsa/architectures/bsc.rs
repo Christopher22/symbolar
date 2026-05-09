@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{borrow::Borrow, sync::Arc};
 
 use bitvec::prelude::*;
 use rand::SeedableRng;
@@ -68,12 +68,12 @@ where
         out
     }
 
-    fn bundle_multi<'a, I>(&self, mut vectors: I) -> Option<Self::StorageMulti>
+    fn bundle_multi<I>(&self, mut vectors: impl Iterator<Item = I>) -> Option<Self::StorageMulti>
     where
-        I: Iterator<Item = &'a Self::Storage>,
-        Self::Storage: 'a,
+        I: Borrow<Self::Storage>,
     {
-        let first = vectors.next()?;
+        let first_borrowed = vectors.next()?;
+        let first = first_borrowed.borrow();
         let len = first.len();
         let mut ones = vec![0; len];
         let mut total = 1usize;
@@ -82,7 +82,8 @@ where
             ones[idx] += usize::from(bit);
         }
 
-        for vector in vectors {
+        for vector_borrowed in vectors {
+            let vector = vector_borrowed.borrow();
             first.enforce_constraints(vector);
             total += 1;
             for (idx, bit) in vector.iter().by_vals().enumerate() {
