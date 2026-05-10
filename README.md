@@ -11,6 +11,13 @@ Add the crate to your project:
 polars-vsa = { git = "https://github.com/Christopher22/polars-vsa.git"}
 ```
 
+Additionally, you may want to build the Python binding. The development container already contains everything to build the package:
+
+```bash
+cd python
+maturin develop
+```
+
 ## Quick Start
 
 The following code reproduces the famous "What is the Dollar in Mexico"? example:
@@ -44,6 +51,31 @@ fn main() {
 }
 ```
 
+In Python, the same example looks like this:
+
+```python
+from polars_vsa import MultiplyAddPermute
+
+# Create and seed the architecture.
+vsa = MultiplyAddPermute(42)
+
+# Create the storage and extend it with the symbols.
+storage = vsa.create_storage(10_000)
+storage.extend(["NAM", "MON",  "CAP", "USA", "DOL", "WDC", "MEX", "PES", "MXC"])
+
+# Compute the dataset vector and query vector, then find the solution and compare it to the expected result.
+dataset_vector = storage.execute(
+    "((NAM * USA) + (CAP * WDC) + (MON * DOL)) * ((NAM * MEX) + (CAP * MXC) + (MON * PES))"
+)
+query_vector = storage.get("DOL")
+
+# Find the solution and compare it to the expected result.
+solution = storage.find(query_vector * dataset_vector)
+expected = storage.get("PES")
+
+assert solution.equals(expected)
+```
+
 ## Project Status
 
 The crate is under active development. APIs may evolve before a 1.0 release.
@@ -57,6 +89,14 @@ cargo fmt --all
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test
 ```
+
+To run the Python tests (including the Dollar-in-Mexico test), you can just run:
+
+```bash
+cd python
+pytest -q
+```
+
 
 ## License
 

@@ -296,3 +296,5 @@ $RECYCLE.BIN/
 
 .devcontainer/devcontainer-lock.json
 .vscode
+
+python/.venv

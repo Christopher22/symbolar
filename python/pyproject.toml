@@ -1,0 +1,14 @@
+[build-system]
+requires = ["maturin>=1.8,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "polars-vsa"
+version = "0.1.0"
+description = "Combining vector symbolic architectures with Polars for efficient, scalable, and expressive data manipulation in Python."
+requires-python = ">=3.10"
+dependencies = ["polars>=1.0"]
+
+[tool.maturin]
+bindings = "pyo3"
+module-name = "polars_vsa"

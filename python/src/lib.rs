@@ -1,0 +1,460 @@
+use std::num::NonZero;
+
+use ::polars_vsa::{
+    Dynamic, Expression, Size, Storage, Subset, Vector,
+    architectures::{BinarySpatterCode, MultiplyAddPermute},
+};
+use polars::prelude::DataFrame;
+use pyo3::exceptions::{PyNotImplementedError, PyValueError};
+use pyo3::prelude::*;
+use pyo3_polars::types::PyDataFrame;
+
+fn to_dynamic_size(size: usize) -> PyResult<Dynamic> {
+    NonZero::new(size)
+        .map(Dynamic::from)
+        .ok_or_else(|| PyValueError::new_err("size must be > 0"))
+}
+
+fn map_error<E: std::fmt::Display>(err: E) -> PyErr {
+    PyValueError::new_err(err.to_string())
+}
+
+#[pyclass(name = "VSA", subclass)]
+#[derive(Clone, Debug)]
+struct PyVsa {
+    architecture: String,
+}
+
+impl PyVsa {
+    fn new(architecture: &'static str) -> Self {
+        Self {
+            architecture: architecture.to_string(),
+        }
+    }
+}
+
+#[pymethods]
+impl PyVsa {
+    fn architecture(&self) -> &str {
+        &self.architecture
+    }
+
+    /// Abstract method — concrete architecture subclasses must override this.
+    fn create_storage(&self, _py: Python<'_>, _num_elements: usize) -> PyResult<Py<PyAny>> {
+        Err(PyNotImplementedError::new_err(
+            "create_storage must be implemented by a concrete architecture subclass",
+        ))
+    }
+
+    fn __repr__(&self) -> String {
+        format!("VSA(architecture={})", self.architecture)
+    }
+}
+
+#[pyclass(name = "Vector", subclass)]
+#[derive(Clone, Debug)]
+struct PyVector {
+    architecture: String,
+    size: usize,
+}
+
+impl PyVector {
+    fn new(architecture: &'static str, size: usize) -> Self {
+        Self {
+            architecture: architecture.to_string(),
+            size,
+        }
+    }
+}
+
+#[pymethods]
+impl PyVector {
+    fn architecture(&self) -> &str {
+        &self.architecture
+    }
+
+    fn size(&self) -> usize {
+        self.size
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "Vector(architecture={}, size={})",
+            self.architecture, self.size
+        )
+    }
+}
+
+#[pyclass(name = "Storage", subclass)]
+#[derive(Clone, Debug)]
+struct PyStorage {
+    architecture: String,
+    size: usize,
+}
+
+impl PyStorage {
+    fn new(architecture: &'static str, size: usize) -> Self {
+        Self {
+            architecture: architecture.to_string(),
+            size,
+        }
+    }
+}
+
+#[pymethods]
+impl PyStorage {
+    fn architecture(&self) -> &str {
+        &self.architecture
+    }
+
+    fn size(&self) -> usize {
+        self.size
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "Storage(architecture={}, size={})",
+            self.architecture, self.size
+        )
+    }
+}
+
+macro_rules! define_architecture_bindings {
+    (
+        architecture_py = $architecture_py:ident,
+        architecture_name = $architecture_name:literal,
+        architecture_inner = $architecture_inner:ty,
+        vector_py = $vector_py:ident,
+        vector_name = $vector_name:literal,
+        vector_inner = $vector_inner:ty,
+        storage_py = $storage_py:ident,
+        storage_name = $storage_name:literal,
+        storage_inner = $storage_inner:ty,
+        subset_py = $subset_py:ident,
+        subset_name = $subset_name:literal,
+    ) => {
+        #[pyclass(name = $architecture_name, extends = PyVsa)]
+        #[derive(Clone, Debug)]
+        struct $architecture_py {
+            inner: $architecture_inner,
+        }
+
+        #[pymethods]
+        impl $architecture_py {
+            #[new]
+            fn new(seed: u64) -> (Self, PyVsa) {
+                (
+                    Self {
+                        inner: <$architecture_inner>::new(seed),
+                    },
+                    PyVsa::new($architecture_name),
+                )
+            }
+
+            fn random_vector(&self, py: Python<'_>, size: usize) -> PyResult<Py<$vector_py>> {
+                let size = to_dynamic_size(size)?;
+                let inner = Vector::random(&self.inner, size);
+                $vector_py::from_inner(py, inner)
+            }
+
+            fn create_storage(
+                &self,
+                py: Python<'_>,
+                num_elements: usize,
+            ) -> PyResult<Py<$storage_py>> {
+                let inner =
+                    <$storage_inner>::new(self.inner.clone(), to_dynamic_size(num_elements)?);
+                $storage_py::from_inner(py, num_elements, inner)
+            }
+        }
+
+        #[pyclass(name = $vector_name, extends = PyVector)]
+        #[derive(Clone, Debug)]
+        struct $vector_py {
+            inner: $vector_inner,
+        }
+
+        impl $vector_py {
+            fn from_inner(py: Python<'_>, inner: $vector_inner) -> PyResult<Py<Self>> {
+                let size = inner.size.size();
+                Py::new(
+                    py,
+                    (Self { inner }, PyVector::new($architecture_name, size)),
+                )
+            }
+        }
+
+        #[pymethods]
+        impl $vector_py {
+            fn similarity(&self, other: &$vector_py) -> f64 {
+                self.inner.similarity(&other.inner)
+            }
+
+            fn permute(&self, py: Python<'_>, shifts: usize) -> PyResult<Py<$vector_py>> {
+                $vector_py::from_inner(py, self.inner.clone().permute(shifts))
+            }
+
+            fn bind(&self, py: Python<'_>, other: &$vector_py) -> PyResult<Py<$vector_py>> {
+                $vector_py::from_inner(py, &self.inner * &other.inner)
+            }
+
+            fn bundle(&self, py: Python<'_>, other: &$vector_py) -> PyResult<Py<$vector_py>> {
+                $vector_py::from_inner(py, &self.inner + &other.inner)
+            }
+
+            fn equals(&self, other: &$vector_py) -> bool {
+                self.inner == other.inner
+            }
+
+            fn __mul__(&self, py: Python<'_>, other: &$vector_py) -> PyResult<Py<$vector_py>> {
+                self.bind(py, other)
+            }
+
+            fn __add__(&self, py: Python<'_>, other: &$vector_py) -> PyResult<Py<$vector_py>> {
+                self.bundle(py, other)
+            }
+
+            fn __repr__(&self) -> String {
+                format!("{}(size={})", $vector_name, self.inner.size.size())
+            }
+        }
+
+        #[pyclass(name = $storage_name, extends = PyStorage)]
+        #[derive(Clone, Debug)]
+        struct $storage_py {
+            inner: $storage_inner,
+            size: usize,
+        }
+
+        impl $storage_py {
+            fn from_inner(
+                py: Python<'_>,
+                size: usize,
+                inner: $storage_inner,
+            ) -> PyResult<Py<Self>> {
+                Py::new(
+                    py,
+                    (
+                        Self { inner, size },
+                        PyStorage::new($architecture_name, size),
+                    ),
+                )
+            }
+        }
+
+        #[pymethods]
+        impl $storage_py {
+            #[new]
+            fn new(architecture: &$architecture_py, size: usize) -> PyResult<(Self, PyStorage)> {
+                let inner =
+                    <$storage_inner>::new(architecture.inner.clone(), to_dynamic_size(size)?);
+                Ok((
+                    Self { inner, size },
+                    PyStorage::new($architecture_name, size),
+                ))
+            }
+
+            #[staticmethod]
+            fn from_dataframe(
+                py: Python<'_>,
+                architecture: &$architecture_py,
+                size: usize,
+                dataframe: PyDataFrame,
+            ) -> PyResult<Py<$storage_py>> {
+                let dataframe: DataFrame = dataframe.into();
+                let inner = <$storage_inner>::from_dataframe(
+                    architecture.inner.clone(),
+                    to_dynamic_size(size)?,
+                    &dataframe,
+                )
+                .map_err(map_error)?;
+
+                $storage_py::from_inner(py, size, inner)
+            }
+
+            fn push(&mut self, name: String) {
+                self.inner.push(name);
+            }
+
+            fn extend(&mut self, names: Vec<String>) {
+                self.inner.extend(names);
+            }
+
+            fn columns(&self) -> Vec<String> {
+                self.inner
+                    .columns()
+                    .map(|value| value.to_string())
+                    .collect()
+            }
+
+            fn values(&self) -> Vec<String> {
+                self.inner.values().map(|value| value.to_string()).collect()
+            }
+
+            fn get(&self, py: Python<'_>, name: &str) -> PyResult<Option<Py<$vector_py>>> {
+                match self.inner.get(&name).cloned() {
+                    Some(inner) => Ok(Some($vector_py::from_inner(py, inner)?)),
+                    None => Ok(None),
+                }
+            }
+
+            fn get_column_value(
+                &self,
+                py: Python<'_>,
+                column: &str,
+                value: &str,
+            ) -> PyResult<Option<Py<$vector_py>>> {
+                match self
+                    .inner
+                    .get(&(
+                        ::polars_vsa::Column::from_str(column),
+                        ::polars_vsa::Value::from_str(value),
+                    ))
+                    .cloned()
+                {
+                    Some(inner) => Ok(Some($vector_py::from_inner(py, inner)?)),
+                    None => Ok(None),
+                }
+            }
+
+            fn execute(&self, py: Python<'_>, expression: &str) -> PyResult<Py<$vector_py>> {
+                let expression: Expression = expression.parse().map_err(map_error)?;
+                let result = self.inner.execute(&expression).map_err(map_error)?;
+                $vector_py::from_inner(py, result.into_owned())
+            }
+
+            fn find(
+                &self,
+                py: Python<'_>,
+                vector: &$vector_py,
+            ) -> PyResult<Option<Py<$vector_py>>> {
+                match self
+                    .inner
+                    .find(&vector.inner, &())
+                    .and_then(|index| self.inner.get(&index))
+                    .cloned()
+                {
+                    Some(inner) => Ok(Some($vector_py::from_inner(py, inner)?)),
+                    None => Ok(None),
+                }
+            }
+
+            fn subset(&self, dataframe: PyDataFrame) -> $subset_py {
+                $subset_py {
+                    storage: self.inner.clone(),
+                    dataframe: dataframe.into(),
+                }
+            }
+
+            fn __repr__(&self) -> String {
+                format!(
+                    "{}(size={}, columns={}, values={})",
+                    $storage_name,
+                    self.size,
+                    self.inner.columns().count(),
+                    self.inner.values().count()
+                )
+            }
+        }
+
+        #[pyclass(name = $subset_name)]
+        #[derive(Clone, Debug)]
+        struct $subset_py {
+            storage: $storage_inner,
+            dataframe: DataFrame,
+        }
+
+        impl $subset_py {
+            fn build_subset(&self) -> Result<Subset<'_, Dynamic, $architecture_inner>, PyErr> {
+                self.storage.subset(&self.dataframe).map_err(map_error)
+            }
+        }
+
+        #[pymethods]
+        impl $subset_py {
+            fn bundle_rows(&self, py: Python<'_>) -> PyResult<Vec<Option<Py<$vector_py>>>> {
+                let subset = self.build_subset()?;
+                subset
+                    .bundle_rows()
+                    .into_iter()
+                    .map(|item| match item {
+                        Some(inner) => Ok(Some($vector_py::from_inner(py, inner)?)),
+                        None => Ok(None),
+                    })
+                    .collect()
+            }
+
+            fn bundle_dataset(&self, py: Python<'_>) -> PyResult<Option<Py<$vector_py>>> {
+                let subset = self.build_subset()?;
+                match subset.bundle_dataset() {
+                    Some(inner) => Ok(Some($vector_py::from_inner(py, inner)?)),
+                    None => Ok(None),
+                }
+            }
+
+            fn bind_dataset(&self, py: Python<'_>) -> PyResult<Option<Py<$vector_py>>> {
+                let subset = self.build_subset()?;
+                match subset.bind_dataset() {
+                    Some(inner) => Ok(Some($vector_py::from_inner(py, inner)?)),
+                    None => Ok(None),
+                }
+            }
+        }
+    };
+}
+
+type BscArchitecture = BinarySpatterCode<usize>;
+type MapArchitecture = MultiplyAddPermute<usize>;
+type BscVector = Vector<Dynamic, BscArchitecture>;
+type MapVector = Vector<Dynamic, MapArchitecture>;
+type BscStorage = Storage<Dynamic, BscArchitecture>;
+type MapStorage = Storage<Dynamic, MapArchitecture>;
+
+define_architecture_bindings!(
+    architecture_py = PyBinarySpatterCode,
+    architecture_name = "BinarySpatterCode",
+    architecture_inner = BscArchitecture,
+    vector_py = PyBscVector,
+    vector_name = "BscVector",
+    vector_inner = BscVector,
+    storage_py = PyBscStorage,
+    storage_name = "BscStorage",
+    storage_inner = BscStorage,
+    subset_py = PyBscSubset,
+    subset_name = "BscSubset",
+);
+
+define_architecture_bindings!(
+    architecture_py = PyMultiplyAddPermute,
+    architecture_name = "MultiplyAddPermute",
+    architecture_inner = MapArchitecture,
+    vector_py = PyMapVector,
+    vector_name = "MapVector",
+    vector_inner = MapVector,
+    storage_py = PyMapStorage,
+    storage_name = "MapStorage",
+    storage_inner = MapStorage,
+    subset_py = PyMapSubset,
+    subset_name = "MapSubset",
+);
+
+#[pymodule]
+fn polars_vsa(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<PyVsa>()?;
+    module.add_class::<PyVector>()?;
+    module.add_class::<PyStorage>()?;
+
+    module.add_class::<PyBinarySpatterCode>()?;
+    module.add_class::<PyMultiplyAddPermute>()?;
+
+    module.add_class::<PyBscVector>()?;
+    module.add_class::<PyMapVector>()?;
+
+    module.add_class::<PyBscStorage>()?;
+    module.add_class::<PyMapStorage>()?;
+
+    module.add_class::<PyBscSubset>()?;
+    module.add_class::<PyMapSubset>()?;
+
+    Ok(())
+}

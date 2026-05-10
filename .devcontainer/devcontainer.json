@@ -4,14 +4,25 @@
 	"features": {
 		"ghcr.io/devcontainers/features/rust:1": {
 			"profile": "default"
+		},
+		"ghcr.io/devcontainers/features/python:1": {
+			"version": "3.10"
 		}
 	},
+	// Create a venv, install build/test tools, and do an initial `maturin develop` build.
+	"postCreateCommand": "python3 -m venv python/.venv && python/.venv/bin/pip install --upgrade pip maturin pytest && cd python && .venv/bin/maturin develop",
+	// Activate the venv for every terminal session inside the container.
+	"remoteEnv": {
+		"VIRTUAL_ENV": "${containerWorkspaceFolder}/python/.venv",
+		"PATH": "${containerWorkspaceFolder}/python/.venv/bin:${containerEnv:PATH}"
+	},
 	"customizations": {
-        "vscode":{
-            "settings": {
+		"vscode": {
+			"settings": {
 				"[rust]": {
 					"editor.formatOnSave": true
-				}
+				},
+				"python.defaultInterpreterPath": "${containerWorkspaceFolder}/python/.venv/bin/python3"
 			}
 		}
 	}
