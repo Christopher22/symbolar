@@ -74,6 +74,7 @@ pub struct Vector<S: Size, V: VectorSymbolicArchitecture> {
 }
 
 impl<S: Size, V: VectorSymbolicArchitecture> Vector<S, V> {
+    #[cfg(feature = "polars")]
     pub(crate) fn new(vsa: V, size: S, data: V::Storage) -> Self {
         assert!(
             V::valid_size(size),

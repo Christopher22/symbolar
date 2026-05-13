@@ -1,4 +1,4 @@
-use polars_vsa::{
+use symbolar::{
     Dynamic, Vector,
     architectures::{Storage, VectorSymbolicArchitecture},
 };
@@ -131,7 +131,7 @@ fn test_compatibility_with_torchhd() {
     for (arch_name, fixture) in fixtures {
         match arch_name.as_str() {
             "BSC" => {
-                let bsc = polars_vsa::architectures::BinarySpatterCode::<u8>::new(42);
+                let bsc = symbolar::architectures::BinarySpatterCode::<u8>::new(42);
                 fixture.test(arch_name.as_str(), &bsc, false, ExactCompare);
 
                 let v1 =
@@ -147,7 +147,7 @@ fn test_compatibility_with_torchhd() {
                 );
             }
             "MAP" => {
-                let map = polars_vsa::architectures::MultiplyAddPermute::<u8>::new(42);
+                let map = symbolar::architectures::MultiplyAddPermute::<u8>::new(42);
                 fixture.test(arch_name.as_str(), &map, true, ExactCompare);
 
                 let v1 =
@@ -163,7 +163,7 @@ fn test_compatibility_with_torchhd() {
                 );
             }
             "HRR" => {
-                let hrr = polars_vsa::architectures::HolographicReducedRepresentation::<
+                let hrr = symbolar::architectures::HolographicReducedRepresentation::<
                     f64,
                     rand::rngs::StdRng,
                 >::new(42);
@@ -188,7 +188,7 @@ fn test_compatibility_with_torchhd() {
                 );
             }
             "VTB" => {
-                let vtb = polars_vsa::architectures::VectorDerivedTransformationBinding::<
+                let vtb = symbolar::architectures::VectorDerivedTransformationBinding::<
                     f64,
                     rand::rngs::StdRng,
                 >::new(42);

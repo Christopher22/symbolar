@@ -1,6 +1,6 @@
-# polars-vsa
+# symbolar
 
-`polars-vsa` provides a strongly-typed API for building and querying high-dimensional symbolic representations. It is designed for workflows where symbolic composition, similarity search, and tabular data processing need to work together. It supports queries at runtime by a own small expression engine.
+`symbolar` provides a strongly-typed API for building and querying high-dimensional symbolic representations. It is designed for workflows where symbolic composition, similarity search, and tabular data processing need to work together. It supports queries at runtime by a own small expression engine.
 
 ## Installation
 
@@ -8,7 +8,7 @@ Add the crate to your project:
 
 ```toml
 [dependencies]
-polars-vsa = { git = "https://github.com/Christopher22/polars-vsa.git"}
+symbolar = { git = "https://github.com/Christopher22/polars-vsa.git"}
 ```
 
 Additionally, you may want to build the Python binding. The development container already contains everything to build the package:
@@ -23,7 +23,7 @@ maturin develop
 The following code reproduces the famous "What is the Dollar in Mexico"? example:
 
 ```rust
-use polars_vsa::{architectures::BinarySpatterCode, Expression, Fixed, Storage};
+use symbolar::{architectures::BinarySpatterCode, Expression, Fixed, Storage};
 
 fn main() {
     // Create the storage
@@ -54,7 +54,7 @@ fn main() {
 In Python, the same example looks like this:
 
 ```python
-from polars_vsa import MultiplyAddPermute
+from symbolar import MultiplyAddPermute
 
 # Create and seed the architecture.
 vsa = MultiplyAddPermute(42)

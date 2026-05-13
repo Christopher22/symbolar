@@ -1,15 +1,15 @@
 [package]
-name = "polars-vsa-py"
+name = "symbolar-py"
 version = "0.1.0"
 edition = "2024"
 publish = false
 
 [lib]
-name = "polars_vsa_py"
+name = "symbolar_py"
 crate-type = ["cdylib"]
 
 [dependencies]
-polars-vsa = { path = ".." }
+symbolar = { path = "..", features = ["polars"] }
 polars = { version = "0.53.0", features = ["dtype-categorical"] }
 pyo3 = { version = "0.27.0", features = ["extension-module"] }
 pyo3-polars = "0.26.0"

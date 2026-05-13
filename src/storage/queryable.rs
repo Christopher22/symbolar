@@ -1,7 +1,4 @@
-use super::ColumnType;
-use crate::{
-    Column, Size, Storage, Value, Vector, VectorIndex, architectures::VectorSymbolicArchitecture,
-};
+use crate::{Size, Storage, Value, Vector, VectorIndex, architectures::VectorSymbolicArchitecture};
 
 /// A queryable item for a vector storage.
 pub trait Queryable {
@@ -26,41 +23,6 @@ impl<'s> Queryable for Value<'s> {
         storage: &Storage<S, V>,
     ) -> Option<VectorIndex> {
         storage.vectors.names.get(self.0.as_ref()).copied()
-    }
-}
-
-impl<'s> Queryable for Column<'s> {
-    fn query_index<S: Size, V: VectorSymbolicArchitecture>(
-        &self,
-        storage: &Storage<S, V>,
-    ) -> Option<VectorIndex> {
-        storage.columns.get(self.0.as_ref()).map(|col| col.vector)
-    }
-}
-
-impl<'s1, 's2> Queryable for (Column<'s1>, Value<'s2>) {
-    fn query_index<S: Size, V: VectorSymbolicArchitecture>(
-        &self,
-        storage: &Storage<S, V>,
-    ) -> Option<VectorIndex> {
-        let column = storage.columns.get(self.0.0.as_ref())?;
-        match column.column_type {
-            ColumnType::String => {
-                // For string columns, we can directly query the value vector.
-                storage.vectors.names.get(self.1.0.as_ref()).copied()
-            }
-            ColumnType::Enum {
-                ref categories,
-                ref values,
-            } => {
-                // For enum columns, we check the existance.
-                let value_index = categories
-                    .categories()
-                    .iter()
-                    .position(|cat| cat == Some(self.1.0.as_ref()))?;
-                Some(values[value_index])
-            }
-        }
     }
 }
 

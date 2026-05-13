@@ -1,4 +1,4 @@
-import polars_vsa as vsa
+import symbolar as vsa
 import pytest
 
 

@@ -17,8 +17,10 @@ mod storage;
 mod vsa;
 
 pub use self::expression::{EvaluateOps, Expression, ParseError, UnknownValue};
+#[cfg(feature = "polars")]
+pub use self::storage::{Column, Subset, SubsetError};
 pub use self::storage::{
-    Column, Queryable, Selector, Storage, StorageError, Subset, SubsetError, Value, VectorIndex,
-    VectorIter,
+    Queryable, Selector, Storage, StorageError, Value, VectorIndex, VectorIter,
 };
+
 pub use self::vsa::*;

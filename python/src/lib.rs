@@ -1,6 +1,6 @@
 use std::num::NonZero;
 
-use ::polars_vsa::{
+use ::symbolar::{
     Dynamic, Expression, Size, Storage, Subset, Vector,
     architectures::{
         BinarySpatterCode, HolographicReducedRepresentation, MultiplyAddPermute,
@@ -314,8 +314,8 @@ macro_rules! define_architecture_bindings {
                 match self
                     .inner
                     .get(&(
-                        ::polars_vsa::Column::from_str(column),
-                        ::polars_vsa::Value::from_str(value),
+                        ::symbolar::Column::from_str(column),
+                        ::symbolar::Value::from_str(value),
                     ))
                     .cloned()
                 {
@@ -500,7 +500,7 @@ define_architecture_bindings!(
 );
 
 #[pymodule]
-fn polars_vsa(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
+fn symbolar(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyVsa>()?;
     module.add_class::<PyVector>()?;
     module.add_class::<PyStorage>()?;

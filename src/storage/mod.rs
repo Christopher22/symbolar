@@ -1,16 +1,18 @@
+#[cfg(feature = "polars")]
+mod polars_util;
 mod queryable;
 mod selector;
-mod subset;
 
 use std::{borrow::Cow, collections::HashMap};
 
-use polars::prelude::*;
-
+#[cfg(feature = "polars")]
+use self::polars_util::Columns;
 use crate::{Expression, Size, UnknownValue, Vector, architectures::VectorSymbolicArchitecture};
 
+#[cfg(feature = "polars")]
+pub use self::polars_util::{Column, Subset, SubsetError};
 pub use self::queryable::Queryable;
 pub use self::selector::Selector;
-pub use self::subset::{Error as SubsetError, Subset};
 
 /// A numerical ID for a vector in the storage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -55,26 +57,12 @@ impl<S: Size, V: VectorSymbolicArchitecture> NamedVectors<S, V> {
     }
 }
 
-#[derive(Debug, Clone)]
-struct ColumnData {
-    vector: VectorIndex,
-    column_type: ColumnType,
-}
-
-#[derive(Debug, Clone)]
-enum ColumnType {
-    String,
-    Enum {
-        categories: Arc<FrozenCategories>,
-        values: Vec<VectorIndex>,
-    },
-}
-
 /// A storage of (named) vectors related to a DataFrame.
 #[derive(Debug, Clone)]
 pub struct Storage<S: Size, V: VectorSymbolicArchitecture> {
     vectors: NamedVectors<S, V>,
-    columns: HashMap<String, ColumnData>,
+    #[cfg(feature = "polars")]
+    columns: Columns,
 }
 
 impl<S: Size, V: VectorSymbolicArchitecture> Storage<S, V> {
@@ -89,60 +77,9 @@ impl<S: Size, V: VectorSymbolicArchitecture> Storage<S, V> {
     pub fn new(vsa: V, size: S) -> Option<Self> {
         Some(Self {
             vectors: NamedVectors::new(vsa, size)?,
-            columns: HashMap::new(),
+            #[cfg(feature = "polars")]
+            columns: Columns::default(),
         })
-    }
-
-    /// Create a new vector storage from a DataFrame.
-    pub fn from_dataframe(vsa: V, size: S, dataframe: &DataFrame) -> Result<Self, StorageError> {
-        let mut vectors = NamedVectors::new(vsa, size).ok_or(StorageError::InvalidSize)?;
-        let mut columns = HashMap::new();
-
-        for col in dataframe.columns().iter() {
-            let name = col.name();
-            columns.insert(
-                name.to_string(),
-                match col.dtype() {
-                    DataType::Enum(categories, _) => ColumnData {
-                        vector: vectors.get_or_insert(name.as_str()),
-                        column_type: ColumnType::Enum {
-                            categories: categories.clone(),
-                            values: categories
-                                .categories()
-                                .iter()
-                                .map(|cat| {
-                                    // TODO: Handly invalid str
-                                    vectors.get_or_insert(cat.expect("valid str"))
-                                })
-                                .collect(),
-                        },
-                    },
-                    DataType::String => {
-                        // The slow way: we need to iterate over all values to create vectors for them.
-                        for value in col.str().expect("string column").into_iter().flatten() {
-                            vectors.get_or_insert(value);
-                        }
-                        ColumnData {
-                            vector: vectors.get_or_insert(name.as_str()),
-                            column_type: ColumnType::String,
-                        }
-                    }
-                    dtype => {
-                        return Err(StorageError::InvalidDataType {
-                            column: col.name().to_string(),
-                            dtype: dtype.clone(),
-                        });
-                    }
-                },
-            );
-        }
-
-        Ok(Self { vectors, columns })
-    }
-
-    /// Create a subset of the storage corresponding to a specific DataFrame.
-    pub fn subset<'a>(&'a self, dataframe: &DataFrame) -> Result<Subset<'a, S, V>, SubsetError> {
-        Subset::new(self, dataframe)
     }
 
     /// Add a new vector with the given name to the storage. If it already exists, return the existing vector.
@@ -169,11 +106,6 @@ impl<S: Size, V: VectorSymbolicArchitecture> Storage<S, V> {
         selector: &'a I,
     ) -> VectorIter<'a, S, V, I> {
         VectorIter::new(self, selector)
-    }
-
-    /// Query all known colums in the storage.
-    pub fn columns(&self) -> impl Iterator<Item = Column<'_>> {
-        self.columns.keys().map(|s| Column::from_str(s.as_str()))
     }
 
     /// Query all known values in the storage. This include the columns themselves.
@@ -215,40 +147,38 @@ impl<S: Size, V: VectorSymbolicArchitecture> Storage<S, V> {
     }
 }
 
+#[cfg(feature = "polars")]
+impl<S: Size, V: VectorSymbolicArchitecture> Storage<S, V> {
+    /// Create a new vector storage from a DataFrame.
+    pub fn from_dataframe(
+        vsa: V,
+        size: S,
+        dataframe: &polars::frame::DataFrame,
+    ) -> Result<Self, StorageError> {
+        let mut vectors = NamedVectors::new(vsa, size).ok_or(StorageError::InvalidSize)?;
+        let columns = Columns::from_columns(&mut vectors, dataframe.columns().iter())?;
+        Ok(Self { vectors, columns })
+    }
+
+    /// Create a subset of the storage corresponding to a specific DataFrame.
+    pub fn subset<'a>(
+        &'a self,
+        dataframe: &polars::frame::DataFrame,
+    ) -> Result<Subset<'a, S, V>, SubsetError> {
+        Subset::new(self, dataframe)
+    }
+
+    /// Query all known colums in the storage.
+    pub fn columns(&self) -> impl Iterator<Item = Column<'_>> {
+        self.columns.0.keys().map(|s| Column::from_str(s.as_str()))
+    }
+}
+
 impl<S: Size, V: VectorSymbolicArchitecture, Q: Queryable> std::ops::Index<Q> for Storage<S, V> {
     type Output = Vector<S, V>;
 
     fn index(&self, query: Q) -> &Self::Output {
         query.query(self).expect("valid reference")
-    }
-}
-
-/// A column name query.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Column<'s>(Cow<'s, str>);
-
-impl<'a> Column<'a> {
-    /// Create a column query from a string.
-    pub const fn from_str(name: &'a str) -> Self {
-        Self(Cow::Borrowed(name))
-    }
-}
-
-impl<'s> From<&'s str> for Column<'s> {
-    fn from(value: &'s str) -> Self {
-        Self(Cow::Borrowed(value))
-    }
-}
-
-impl From<String> for Column<'static> {
-    fn from(value: String) -> Self {
-        Self(Cow::Owned(value))
-    }
-}
-
-impl std::fmt::Display for Column<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.0.as_ref())
     }
 }
 
@@ -283,13 +213,15 @@ impl std::fmt::Display for Value<'_> {
 
 /// An error related to vector storage construction or querying.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(missing_copy_implementations)]
 pub enum StorageError {
     /// An invalid data type was encountered in the DataFrame.
+    #[cfg(feature = "polars")]
     InvalidDataType {
         /// The name of the column with the invalid data type.
         column: String,
         /// The invalid data type encountered.
-        dtype: DataType,
+        dtype: polars::datatypes::DataType,
     },
     /// The size of the vectors is invalid for the architecture.
     InvalidSize,
@@ -298,6 +230,7 @@ pub enum StorageError {
 impl std::fmt::Display for StorageError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            #[cfg(feature = "polars")]
             StorageError::InvalidDataType { column, dtype } => {
                 write!(f, "invalid data type for column '{column}': {dtype}")
             }
@@ -358,65 +291,9 @@ mod tests {
     fn test_construction_empty() {
         let vsa = crate::architectures::MultiplyAddPermute::<u8>::new(42);
         let storage = Storage::new(vsa, crate::Fixed::<128>).expect("valid size");
+        #[cfg(feature = "polars")]
         assert!(storage.columns().next().is_none());
         assert!(storage.values().next().is_none());
-    }
-
-    #[test]
-    fn test_construction_from_dataframe() {
-        let enum_dtype = DataType::from_frozen_categories(
-            FrozenCategories::new(vec!["circle", "square", "triangle"]).unwrap(),
-        );
-
-        let df = DataFrame::new(
-            3,
-            vec![
-                // Create a string column
-                polars::frame::column::Column::new("color".into(), &["red", "green", "blue"]),
-                // Create a enum column
-                polars::frame::column::Column::new("shape".into(), &["circle", "square", "circle"])
-                    .cast(&enum_dtype)
-                    .unwrap(),
-            ],
-        )
-        .expect("valid dataframe");
-
-        let vsa = crate::architectures::MultiplyAddPermute::<u8>::new(42);
-        let storage =
-            Storage::from_dataframe(vsa, crate::Fixed::<128>, &df).expect("valid vector storage");
-
-        assert_eq!(storage.values().count(), 2 * 3 + 2);
-        assert_eq!(storage.columns().count(), 2);
-
-        assert_eq!(storage["color"], storage[Column::from_str("color")]);
-        assert_eq!(storage["shape"], storage[Column::from_str("shape")]);
-        assert_ne!(storage["shape"], storage["color"]);
-
-        assert_eq!(storage["red"], storage[Value::from_str("red")]);
-
-        assert_eq!(
-            storage[(Column::from_str("shape"), Value::from_str("circle"))],
-            storage[Value::from_str("circle")]
-        );
-
-        // There is nothing special about a column vector ...
-        assert_eq!(storage[Column::from_str("color")], storage["color"]);
-        // ... but it must exist.
-        assert!(storage.get(&Column::from_str("red")).is_none());
-
-        // A string column can be everything
-        assert_eq!(
-            storage[(Column::from_str("color"), Value::from_str("circle"))],
-            storage["circle"]
-        );
-
-        // Enum-specific behavior
-        assert!(storage.get(&Value::from_str("triangle")).is_some()); // Triangle has a vector, even if it was not in the column
-        assert!(
-            storage
-                .get(&(Column::from_str("shape"), Value::from_str("red")))
-                .is_none()
-        ); // Red is not a valid value for the shape column
     }
 
     #[test]
@@ -430,6 +307,7 @@ mod tests {
         assert_ne!(storage["vec1"], storage["vec2"]);
         assert_eq!(storage["vec1"], storage["vec1"]);
         assert_eq!(storage.values().count(), 2);
+        #[cfg(feature = "polars")]
         assert_eq!(storage.columns().count(), 0);
     }
 
@@ -442,6 +320,7 @@ mod tests {
         assert_ne!(storage["vec1"], storage["vec2"]);
         assert_eq!(storage["vec1"], storage["vec1"]);
         assert_eq!(storage.values().count(), 2);
+        #[cfg(feature = "polars")]
         assert_eq!(storage.columns().count(), 0);
     }
 

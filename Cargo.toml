@@ -1,22 +1,25 @@
 [package]
-name = "polars-vsa"
-version = "0.7.0"
+name = "symbolar"
+version = "0.8.0"
 edition = "2024"
 rust-version = "1.85"
-description = "Type-safe Vector Symbolic Architectures with Polars-backed storage and expression execution."
+description = "Type-safe, Polars-compatible Vector Symbolic Architectures with storage and expression execution."
 license = "MIT"
 readme = "README.md"
-repository = "https://github.com/Christopher22/polars-vsa"
-homepage = "https://github.com/Christopher22/polars-vsa"
-documentation = "https://docs.rs/polars-vsa"
+repository = "https://github.com/Christopher22/symbolar"
+homepage = "https://github.com/Christopher22/symbolar"
 keywords = ["vsa", "hyperdimensional", "polars", "symbolic", "vectors"]
 categories = ["algorithms", "data-structures", "science"]
+
+[features]
+default = ["polars"]
+polars = ["dep:polars"]
 
 [dependencies]
 bitvec = "1.0.1"
 num-traits = "0.2.19"
 parking_lot = "0.12.5"
-polars = { version = "0.53.0", features = ["dtype-categorical"] }
+polars = { version = "0.53.0", features = ["dtype-categorical"], optional = true }
 rand = "0.10.1"
 
 [dev-dependencies]

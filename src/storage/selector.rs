@@ -1,7 +1,4 @@
-use super::ColumnType;
-use crate::{
-    Column, Queryable, Size, Storage, VectorIndex, architectures::VectorSymbolicArchitecture,
-};
+use crate::{Queryable, Size, Storage, VectorIndex, architectures::VectorSymbolicArchitecture};
 
 /// A selector for multiple vectors in the storage.
 pub trait Selector<S: Size, V: VectorSymbolicArchitecture> {
@@ -38,26 +35,6 @@ impl<'b, S: Size, V: VectorSymbolicArchitecture, T: Queryable> Selector<S, V> fo
 
     fn select<'a>(&'a self, storage: &'a Storage<S, V>) -> Self::Indices<'a> {
         SelectionIter::new(storage, self)
-    }
-}
-
-impl<S: Size, V: VectorSymbolicArchitecture> Selector<S, V> for Column<'_> {
-    type Indices<'a>
-        = ColumnIter<'a>
-    where
-        Self: 'a,
-        S: 'a,
-        V: 'a;
-
-    fn select<'a>(&'a self, storage: &'a Storage<S, V>) -> Self::Indices<'a> {
-        storage
-            .columns
-            .get(self.0.as_ref())
-            .map(|col| match col.column_type {
-                ColumnType::String => ColumnIter::String(0..storage.vectors.vectors.len()),
-                ColumnType::Enum { ref values, .. } => ColumnIter::Enum(values.iter()),
-            })
-            .unwrap_or(ColumnIter::Invalid)
     }
 }
 
@@ -116,44 +93,6 @@ impl<'a, 'b, S: Size, V: VectorSymbolicArchitecture, Q: Queryable> Iterator
             if let Some(index) = query.query_index(self.storage) {
                 return Some(index);
             }
-        }
-    }
-}
-
-/// A iterator over the vectors in a column.
-#[derive(Debug, Clone)]
-pub enum ColumnIter<'a> {
-    Invalid,
-    String(std::ops::Range<usize>),
-    Enum(std::slice::Iter<'a, VectorIndex>),
-}
-
-impl Iterator for ColumnIter<'_> {
-    type Item = VectorIndex;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            Self::Invalid => None,
-            Self::String(iter) => iter.next().map(VectorIndex),
-            Self::Enum(iter) => iter.next().copied(),
-        }
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        match self {
-            Self::Invalid => (0, Some(0)),
-            Self::String(iter) => iter.size_hint(),
-            Self::Enum(iter) => iter.size_hint(),
-        }
-    }
-}
-
-impl ExactSizeIterator for ColumnIter<'_> {
-    fn len(&self) -> usize {
-        match self {
-            ColumnIter::Invalid => 0,
-            ColumnIter::String(iter) => iter.len(),
-            ColumnIter::Enum(iter) => iter.len(),
         }
     }
 }

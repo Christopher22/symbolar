@@ -1,4 +1,4 @@
-use polars_vsa::{
+use symbolar::{
     Expression, Fixed, Size, Storage,
     architectures::{
         BinarySpatterCode, NonSelfInverseVectorSymbolicArchitecture,
@@ -81,7 +81,7 @@ fn test_dollar_mexico_bsc() {
 
 #[test]
 fn test_dollar_mexico_map() {
-    test_dollar_mexico_self_inverse(polars_vsa::architectures::MultiplyAddPermute::<usize>::new(
+    test_dollar_mexico_self_inverse(symbolar::architectures::MultiplyAddPermute::<usize>::new(
         42,
     ));
 }
@@ -91,13 +91,13 @@ fn test_dollar_mexico_hrr() {
     test_dollar_mexico_non_self_inverse::<2048, _>(
         // HRR binding is O(n^2), so keep dimensions practical for tests.
         // This still provides stable retrieval while avoiding very long runtime.
-        polars_vsa::architectures::HolographicReducedRepresentation::<f64>::new(42),
+        symbolar::architectures::HolographicReducedRepresentation::<f64>::new(42),
     );
 }
 
 #[test]
 fn test_dollar_mexico_vtb() {
     test_dollar_mexico_non_self_inverse::<10000, _>(
-        polars_vsa::architectures::VectorDerivedTransformationBinding::<f64>::new(42),
+        symbolar::architectures::VectorDerivedTransformationBinding::<f64>::new(42),
     );
 }

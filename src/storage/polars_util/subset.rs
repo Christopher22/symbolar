@@ -1,9 +1,8 @@
 use polars::prelude::*;
 
-use crate::{
-    Size, Storage, Vector, VectorIndex, architectures::VectorSymbolicArchitecture,
-    storage::ColumnType,
-};
+use super::ColumnType;
+
+use crate::{Size, Storage, Vector, VectorIndex, architectures::VectorSymbolicArchitecture};
 
 /// A subset of a dataframe used to derive vectors for specific rows or the entire dataset.
 #[derive(Debug, Clone)]
@@ -15,17 +14,19 @@ pub struct Subset<'a, S: Size, V: VectorSymbolicArchitecture> {
 }
 
 impl<'a, S: Size, V: VectorSymbolicArchitecture> Subset<'a, S, V> {
-    pub(super) fn new(storage: &'a Storage<S, V>, dataframe: &DataFrame) -> Result<Self, Error> {
+    pub(crate) fn new(storage: &'a Storage<S, V>, dataframe: &DataFrame) -> Result<Self, Error> {
         let width = dataframe.width();
         let height = dataframe.height();
         let mut vectors = Vec::with_capacity(width * height);
         let mut columns = Vec::with_capacity(width);
         for column in dataframe.columns() {
-            let ref_column = storage.columns.get(column.name().as_str()).ok_or_else(|| {
-                Error::ColumnNotFound {
+            let ref_column = storage
+                .columns
+                .0
+                .get(column.name().as_str())
+                .ok_or_else(|| Error::ColumnNotFound {
                     name: column.name().to_string(),
-                }
-            })?;
+                })?;
 
             match (&ref_column.column_type, column.dtype()) {
                 (ColumnType::String, DataType::String) => {
