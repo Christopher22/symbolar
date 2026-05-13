@@ -1,14 +1,23 @@
 //! Implementation of different architectures.
 
 mod bsc;
+mod hrr;
 mod map;
+mod vtb;
 
 use bitvec::vec::BitVec;
+use num_traits::float::Float;
+use num_traits::int::PrimInt;
+use num_traits::{AsPrimitive, ConstOne, ConstZero, NumAssign, Unsigned};
 use rand::RngExt;
 use std::borrow::Borrow;
 
+use crate::Size;
+
 pub use self::bsc::BinarySpatterCode;
+pub use self::hrr::HolographicReducedRepresentation;
 pub use self::map::{MultiplyAddPermute, PlusMinusOnes};
+pub use self::vtb::VectorDerivedTransformationBinding;
 
 /// A vector symbolic architecture.
 pub trait VectorSymbolicArchitecture: Clone {
@@ -16,6 +25,11 @@ pub trait VectorSymbolicArchitecture: Clone {
     type Storage: PrimaryStorage;
     /// The underlying storage of a multi vector.
     type StorageMulti: Storage;
+
+    /// Checks if a size of a vector is valid for the architecture.
+    fn valid_size<S: Size>(_size: S) -> bool {
+        true
+    }
 
     /// Create a random vector in the architecture.
     fn random(&self, size: usize) -> Self::Storage;
@@ -36,8 +50,6 @@ pub trait VectorSymbolicArchitecture: Clone {
     fn bind(a: &Self::Storage, b: &Self::Storage) -> Self::Storage;
     /// Permute a vector.
     fn permute(a: &Self::Storage, shifts: usize) -> Self::Storage;
-    /// Inverse a vector.
-    fn inverse(a: &Self::Storage) -> Self::Storage;
     /// Calculate a appopiate similarity for the architecture.
     fn similarity(a: &Self::Storage, b: &Self::Storage) -> f64;
 }
@@ -45,13 +57,19 @@ pub trait VectorSymbolicArchitecture: Clone {
 /// A vector symbolic architecture where the bind operation is self-inverse.
 pub trait SelfInverseVectorSymbolicArchitecture: VectorSymbolicArchitecture {}
 
+/// A vector symbolic architecture where the bind operation is not self-inverse.
+pub trait NonSelfInverseVectorSymbolicArchitecture: VectorSymbolicArchitecture {
+    /// Inverse a vector.
+    fn inverse(a: &Self::Storage) -> Self::Storage;
+}
+
 /// A underyling data type.
 #[allow(clippy::len_without_is_empty)]
 pub trait Storage:
     std::fmt::Debug + Clone + PartialEq + std::ops::Index<usize, Output = Self::Primitive>
 {
     /// The underyling primitive type of the storage which can be read.
-    type Primitive;
+    type Primitive: Copy + PartialEq + PartialOrd;
 
     /// The length of the storage.
     fn len(&self) -> usize;
@@ -114,6 +132,18 @@ impl<R: UIntResolution> PrimaryStorage for BitVec<R, bitvec::order::Lsb0> {
     }
 }
 
+impl<R: FloatResolution> PrimaryStorage for Vec<R> {
+    fn random<Rng: rand::Rng>(rng: &mut Rng, size: usize) -> Self {
+        (0..size)
+            .map(|_| rng.random_range(-R::ONE..R::ONE))
+            .collect()
+    }
+
+    fn parse(s: &[f64]) -> Self {
+        s.iter().map(|v| R::from(*v).unwrap()).collect()
+    }
+}
+
 impl<R: Resolution> Storage for Vec<R> {
     type Primitive = R;
 
@@ -132,83 +162,29 @@ impl<R: Resolution> Storage for Vec<R> {
 }
 
 /// A resolution of a data type.
-pub trait Resolution: std::fmt::Debug + Clone + Copy + PartialEq {
-    /// The identity element for the resolution.
-    const IDENTITY: Self;
-    /// The zero element for the resolution.
-    const ZERO: Self;
+pub trait Resolution:
+    std::fmt::Debug + Copy + PartialOrd + NumAssign + ConstZero + ConstOne
+{
+}
+impl<T> Resolution for T where
+    T: std::fmt::Debug + Copy + PartialOrd + NumAssign + ConstZero + ConstOne
+{
 }
 
 /// A resolution of a data type limited to (positive and negative) integers.
-pub trait IntResolution:
-    Resolution
-    + Ord
-    + Eq
-    + std::ops::Neg<Output = Self>
-    + std::ops::Add<Output = Self>
-    + std::ops::AddAssign
+pub trait IntResolution: Resolution + PrimInt + std::ops::Neg<Output = Self> {}
+impl<T> IntResolution for T where T: Resolution + PrimInt + std::ops::Neg<Output = Self> {}
+
+/// A resolution of a data type limited to floating-point numbers.
+pub trait FloatResolution:
+    Resolution + Float + rand::distr::uniform::SampleUniform + std::iter::Sum + AsPrimitive<f64>
+{
+}
+impl<T> FloatResolution for T where
+    T: Resolution + Float + rand::distr::uniform::SampleUniform + std::iter::Sum + AsPrimitive<f64>
 {
 }
 
 /// A resolution of a data type limited to unsigned integers.
-pub trait UIntResolution: Resolution + bitvec::store::BitStore + Ord + Eq {}
-
-impl Resolution for u8 {
-    const IDENTITY: Self = 1;
-    const ZERO: Self = 0;
-}
-impl UIntResolution for u8 {}
-
-impl Resolution for i8 {
-    const IDENTITY: Self = 1;
-    const ZERO: Self = 0;
-}
-impl IntResolution for i8 {}
-
-impl Resolution for u16 {
-    const IDENTITY: Self = 1;
-    const ZERO: Self = 0;
-}
-impl UIntResolution for u16 {}
-
-impl Resolution for i16 {
-    const IDENTITY: Self = 1;
-    const ZERO: Self = 0;
-}
-impl IntResolution for i16 {}
-
-impl Resolution for u32 {
-    const IDENTITY: Self = 1;
-    const ZERO: Self = 0;
-}
-impl UIntResolution for u32 {}
-
-impl Resolution for i32 {
-    const IDENTITY: Self = 1;
-    const ZERO: Self = 0;
-}
-impl IntResolution for i32 {}
-
-impl Resolution for u64 {
-    const IDENTITY: Self = 1;
-    const ZERO: Self = 0;
-}
-impl UIntResolution for u64 {}
-
-impl Resolution for i64 {
-    const IDENTITY: Self = 1;
-    const ZERO: Self = 0;
-}
-impl IntResolution for i64 {}
-
-impl Resolution for usize {
-    const IDENTITY: Self = 1;
-    const ZERO: Self = 0;
-}
-impl UIntResolution for usize {}
-
-impl Resolution for isize {
-    const IDENTITY: Self = 1;
-    const ZERO: Self = 0;
-}
-impl IntResolution for isize {}
+pub trait UIntResolution: Resolution + Unsigned + bitvec::store::BitStore + Ord + Eq {}
+impl<T> UIntResolution for T where T: Resolution + Unsigned + bitvec::store::BitStore + Ord + Eq {}

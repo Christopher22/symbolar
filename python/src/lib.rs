@@ -2,7 +2,10 @@ use std::num::NonZero;
 
 use ::polars_vsa::{
     Dynamic, Expression, Size, Storage, Subset, Vector,
-    architectures::{BinarySpatterCode, MultiplyAddPermute},
+    architectures::{
+        BinarySpatterCode, HolographicReducedRepresentation, MultiplyAddPermute,
+        VectorDerivedTransformationBinding,
+    },
 };
 use polars::prelude::DataFrame;
 use pyo3::exceptions::{PyNotImplementedError, PyValueError};
@@ -127,6 +130,7 @@ macro_rules! define_architecture_bindings {
         vector_py = $vector_py:ident,
         vector_name = $vector_name:literal,
         vector_inner = $vector_inner:ty,
+        inverse_methods = { $($inverse_methods:tt)* },
         storage_py = $storage_py:ident,
         storage_name = $storage_name:literal,
         storage_inner = $storage_inner:ty,
@@ -153,7 +157,8 @@ macro_rules! define_architecture_bindings {
 
             fn random_vector(&self, py: Python<'_>, size: usize) -> PyResult<Py<$vector_py>> {
                 let size = to_dynamic_size(size)?;
-                let inner = Vector::random(&self.inner, size);
+                let inner = Vector::random(&self.inner, size)
+                    .ok_or_else(|| PyValueError::new_err("invalid vector size for architecture"))?;
                 $vector_py::from_inner(py, inner)
             }
 
@@ -162,8 +167,8 @@ macro_rules! define_architecture_bindings {
                 py: Python<'_>,
                 num_elements: usize,
             ) -> PyResult<Py<$storage_py>> {
-                let inner =
-                    <$storage_inner>::new(self.inner.clone(), to_dynamic_size(num_elements)?);
+                let inner = <$storage_inner>::new(self.inner.clone(), to_dynamic_size(num_elements)?)
+                    .ok_or_else(|| PyValueError::new_err("invalid vector size for architecture"))?;
                 $storage_py::from_inner(py, num_elements, inner)
             }
         }
@@ -206,6 +211,8 @@ macro_rules! define_architecture_bindings {
                 self.inner == other.inner
             }
 
+            $($inverse_methods)*
+
             fn __mul__(&self, py: Python<'_>, other: &$vector_py) -> PyResult<Py<$vector_py>> {
                 self.bind(py, other)
             }
@@ -246,8 +253,8 @@ macro_rules! define_architecture_bindings {
         impl $storage_py {
             #[new]
             fn new(architecture: &$architecture_py, size: usize) -> PyResult<(Self, PyStorage)> {
-                let inner =
-                    <$storage_inner>::new(architecture.inner.clone(), to_dynamic_size(size)?);
+                let inner = <$storage_inner>::new(architecture.inner.clone(), to_dynamic_size(size)?)
+                    .ok_or_else(|| PyValueError::new_err("invalid vector size for architecture"))?;
                 Ok((
                     Self { inner, size },
                     PyStorage::new($architecture_name, size),
@@ -404,11 +411,17 @@ macro_rules! define_architecture_bindings {
 }
 
 type BscArchitecture = BinarySpatterCode<usize>;
+type HrrArchitecture = HolographicReducedRepresentation<f64, rand::rngs::StdRng>;
 type MapArchitecture = MultiplyAddPermute<usize>;
+type VtbArchitecture = VectorDerivedTransformationBinding<f64, rand::rngs::StdRng>;
 type BscVector = Vector<Dynamic, BscArchitecture>;
+type HrrVector = Vector<Dynamic, HrrArchitecture>;
 type MapVector = Vector<Dynamic, MapArchitecture>;
+type VtbVector = Vector<Dynamic, VtbArchitecture>;
 type BscStorage = Storage<Dynamic, BscArchitecture>;
+type HrrStorage = Storage<Dynamic, HrrArchitecture>;
 type MapStorage = Storage<Dynamic, MapArchitecture>;
+type VtbStorage = Storage<Dynamic, VtbArchitecture>;
 
 define_architecture_bindings!(
     architecture_py = PyBinarySpatterCode,
@@ -417,6 +430,7 @@ define_architecture_bindings!(
     vector_py = PyBscVector,
     vector_name = "BscVector",
     vector_inner = BscVector,
+    inverse_methods = {},
     storage_py = PyBscStorage,
     storage_name = "BscStorage",
     storage_inner = BscStorage,
@@ -431,11 +445,58 @@ define_architecture_bindings!(
     vector_py = PyMapVector,
     vector_name = "MapVector",
     vector_inner = MapVector,
+    inverse_methods = {},
     storage_py = PyMapStorage,
     storage_name = "MapStorage",
     storage_inner = MapStorage,
     subset_py = PyMapSubset,
     subset_name = "MapSubset",
+);
+
+define_architecture_bindings!(
+    architecture_py = PyHolographicReducedRepresentation,
+    architecture_name = "HolographicReducedRepresentation",
+    architecture_inner = HrrArchitecture,
+    vector_py = PyHrrVector,
+    vector_name = "HrrVector",
+    vector_inner = HrrVector,
+    inverse_methods = {
+        fn inverse(&self, py: Python<'_>) -> PyResult<Py<PyHrrVector>> {
+            PyHrrVector::from_inner(py, -&self.inner)
+        }
+
+        fn __neg__(&self, py: Python<'_>) -> PyResult<Py<PyHrrVector>> {
+            self.inverse(py)
+        }
+    },
+    storage_py = PyHrrStorage,
+    storage_name = "HrrStorage",
+    storage_inner = HrrStorage,
+    subset_py = PyHrrSubset,
+    subset_name = "HrrSubset",
+);
+
+define_architecture_bindings!(
+    architecture_py = PyVectorDerivedTransformationBinding,
+    architecture_name = "VectorDerivedTransformationBinding",
+    architecture_inner = VtbArchitecture,
+    vector_py = PyVtbVector,
+    vector_name = "VtbVector",
+    vector_inner = VtbVector,
+    inverse_methods = {
+        fn inverse(&self, py: Python<'_>) -> PyResult<Py<PyVtbVector>> {
+            PyVtbVector::from_inner(py, -&self.inner)
+        }
+
+        fn __neg__(&self, py: Python<'_>) -> PyResult<Py<PyVtbVector>> {
+            self.inverse(py)
+        }
+    },
+    storage_py = PyVtbStorage,
+    storage_name = "VtbStorage",
+    storage_inner = VtbStorage,
+    subset_py = PyVtbSubset,
+    subset_name = "VtbSubset",
 );
 
 #[pymodule]
@@ -446,15 +507,23 @@ fn polars_vsa(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
 
     module.add_class::<PyBinarySpatterCode>()?;
     module.add_class::<PyMultiplyAddPermute>()?;
+    module.add_class::<PyHolographicReducedRepresentation>()?;
+    module.add_class::<PyVectorDerivedTransformationBinding>()?;
 
     module.add_class::<PyBscVector>()?;
     module.add_class::<PyMapVector>()?;
+    module.add_class::<PyHrrVector>()?;
+    module.add_class::<PyVtbVector>()?;
 
     module.add_class::<PyBscStorage>()?;
     module.add_class::<PyMapStorage>()?;
+    module.add_class::<PyHrrStorage>()?;
+    module.add_class::<PyVtbStorage>()?;
 
     module.add_class::<PyBscSubset>()?;
     module.add_class::<PyMapSubset>()?;
+    module.add_class::<PyHrrSubset>()?;
+    module.add_class::<PyVtbSubset>()?;
 
     Ok(())
 }

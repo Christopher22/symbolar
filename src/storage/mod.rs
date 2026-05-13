@@ -25,13 +25,16 @@ struct NamedVectors<S: Size, V: VectorSymbolicArchitecture> {
 }
 
 impl<S: Size, V: VectorSymbolicArchitecture> NamedVectors<S, V> {
-    fn new(vsa: V, size: S) -> Self {
-        Self {
+    fn new(vsa: V, size: S) -> Option<Self> {
+        if !V::valid_size(size) {
+            return None;
+        }
+        Some(Self {
             vectors: Vec::new(),
             names: HashMap::new(),
             vsa,
             size,
-        }
+        })
     }
 
     fn get_by_index(&self, index: VectorIndex) -> Option<&Vector<S, V>> {
@@ -45,7 +48,8 @@ impl<S: Size, V: VectorSymbolicArchitecture> NamedVectors<S, V> {
     pub fn get_or_insert(&mut self, name: impl Into<String>) -> VectorIndex {
         *self.names.entry(name.into()).or_insert_with(|| {
             let index = VectorIndex(self.vectors.len());
-            self.vectors.push(Vector::random(&self.vsa, self.size));
+            self.vectors
+                .push(Vector::random(&self.vsa, self.size).expect("previously tested"));
             index
         })
     }
@@ -82,16 +86,16 @@ impl<S: Size, V: VectorSymbolicArchitecture> Storage<S, V> {
     }
 
     /// Create a new empty vector storage.
-    pub fn new(vsa: V, size: S) -> Self {
-        Self {
-            vectors: NamedVectors::new(vsa, size),
+    pub fn new(vsa: V, size: S) -> Option<Self> {
+        Some(Self {
+            vectors: NamedVectors::new(vsa, size)?,
             columns: HashMap::new(),
-        }
+        })
     }
 
     /// Create a new vector storage from a DataFrame.
     pub fn from_dataframe(vsa: V, size: S, dataframe: &DataFrame) -> Result<Self, StorageError> {
-        let mut vectors = NamedVectors::new(vsa, size);
+        let mut vectors = NamedVectors::new(vsa, size).ok_or(StorageError::InvalidSize)?;
         let mut columns = HashMap::new();
 
         for col in dataframe.columns().iter() {
@@ -287,6 +291,8 @@ pub enum StorageError {
         /// The invalid data type encountered.
         dtype: DataType,
     },
+    /// The size of the vectors is invalid for the architecture.
+    InvalidSize,
 }
 
 impl std::fmt::Display for StorageError {
@@ -295,6 +301,7 @@ impl std::fmt::Display for StorageError {
             StorageError::InvalidDataType { column, dtype } => {
                 write!(f, "invalid data type for column '{column}': {dtype}")
             }
+            StorageError::InvalidSize => write!(f, "invalid vector size for the architecture"),
         }
     }
 }
@@ -350,7 +357,7 @@ mod tests {
     #[test]
     fn test_construction_empty() {
         let vsa = crate::architectures::MultiplyAddPermute::<u8>::new(42);
-        let storage = Storage::new(vsa, crate::Fixed::<128>);
+        let storage = Storage::new(vsa, crate::Fixed::<128>).expect("valid size");
         assert!(storage.columns().next().is_none());
         assert!(storage.values().next().is_none());
     }
@@ -415,7 +422,7 @@ mod tests {
     #[test]
     fn test_push() {
         let vsa = crate::architectures::MultiplyAddPermute::<u8>::new(42);
-        let mut storage = Storage::new(vsa, crate::Fixed::<128>);
+        let mut storage = Storage::new(vsa, crate::Fixed::<128>).expect("valid size");
         storage.push("vec1");
         storage.push("vec2");
         storage.push("vec1");
@@ -429,7 +436,7 @@ mod tests {
     #[test]
     fn test_extend() {
         let vsa = crate::architectures::MultiplyAddPermute::<u8>::new(42);
-        let mut storage = Storage::new(vsa, crate::Fixed::<128>);
+        let mut storage = Storage::new(vsa, crate::Fixed::<128>).expect("valid size");
         storage.extend(["vec1", "vec1", "vec2"]);
 
         assert_ne!(storage["vec1"], storage["vec2"]);
@@ -441,7 +448,7 @@ mod tests {
     #[test]
     fn test_execute() {
         let vsa = crate::architectures::MultiplyAddPermute::<u8>::new(42);
-        let mut storage = Storage::new(vsa, crate::Fixed::<128>);
+        let mut storage = Storage::new(vsa, crate::Fixed::<128>).expect("valid size");
         storage.extend(["vec1", "vec2"]);
 
         let expr = Expression::new("vec1");
@@ -452,7 +459,7 @@ mod tests {
     #[test]
     fn test_select_mutliple() {
         let vsa = crate::architectures::MultiplyAddPermute::<u8>::new(42);
-        let mut storage = Storage::new(vsa, crate::Fixed::<128>);
+        let mut storage = Storage::new(vsa, crate::Fixed::<128>).expect("valid size");
         storage.extend(["vec1", "vec2", "vec3"]);
 
         let selector = ["vec1", "vec3"].as_slice();
@@ -466,5 +473,11 @@ mod tests {
         assert_eq!(selected_2[0], &storage["vec1"]);
         assert_eq!(selected_2[1], &storage["vec2"]);
         assert_eq!(selected_2[2], &storage["vec3"]);
+    }
+
+    #[test]
+    fn test_invalid_size() {
+        let vsa = crate::architectures::VectorDerivedTransformationBinding::<f64>::new(42);
+        assert!(Storage::new(vsa, crate::Fixed::<128>).is_none());
     }
 }

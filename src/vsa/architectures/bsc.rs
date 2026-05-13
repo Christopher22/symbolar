@@ -127,10 +127,6 @@ where
         out
     }
 
-    fn inverse(a: &Self::Storage) -> Self::Storage {
-        a.clone()
-    }
-
     fn similarity(a: &Self::Storage, b: &Self::Storage) -> f64 {
         a.enforce_constraints(b);
 
@@ -200,13 +196,6 @@ mod tests {
         let permuted = BinarySpatterCode::<u8>::permute(&a, 2);
 
         assert_eq!(permuted, bitvec![u8, Lsb0; 0, 1, 1, 0, 1]);
-    }
-
-    #[test]
-    fn inverse_returns_copy() {
-        let a: BitVec<u8, Lsb0> = bitvec![u8, Lsb0; 1, 0, 1];
-        let inv = BinarySpatterCode::<u8>::inverse(&a);
-        assert_eq!(inv, a);
     }
 
     #[test]

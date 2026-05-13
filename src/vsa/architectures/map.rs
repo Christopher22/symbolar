@@ -68,7 +68,7 @@ pub struct MultiplyAddPermute<
 
 impl<R: UIntResolution, RM: IntResolution, Rng: rand::Rng> MultiplyAddPermute<R, RM, Rng> {
     fn bit_to_resolution(bit: bool) -> RM {
-        if bit { RM::IDENTITY } else { -RM::IDENTITY }
+        if bit { RM::ONE } else { -RM::ONE }
     }
 }
 
@@ -111,7 +111,7 @@ impl<R: UIntResolution, RM: IntResolution, Rng: rand::Rng> VectorSymbolicArchite
 
     fn normalize(&self, storage: Self::StorageMulti) -> Self::Storage {
         // MAP keeps tie votes (0) as +1 to match TorchHD's sign(0) behavior.
-        let zero = -RM::IDENTITY + RM::IDENTITY;
+        let zero = -RM::ONE + RM::ONE;
         PlusMinusOnes(storage.into_iter().map(|v| v >= zero).collect())
     }
 
@@ -171,10 +171,6 @@ impl<R: UIntResolution, RM: IntResolution, Rng: rand::Rng> VectorSymbolicArchite
         let mut out = a.0.clone();
         out.rotate_right(shift);
         PlusMinusOnes(out)
-    }
-
-    fn inverse(a: &Self::Storage) -> Self::Storage {
-        a.clone()
     }
 
     fn similarity(a: &Self::Storage, b: &Self::Storage) -> f64 {

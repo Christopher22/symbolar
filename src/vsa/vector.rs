@@ -3,7 +3,13 @@ use std::{
     ops::{Add, Mul},
 };
 
-use crate::{EvaluateOps, architectures::VectorSymbolicArchitecture};
+use crate::{
+    EvaluateOps,
+    architectures::{
+        NonSelfInverseVectorSymbolicArchitecture, PrimaryStorage, Storage,
+        VectorSymbolicArchitecture,
+    },
+};
 
 /// A trait abtracting about dynamic and fixed sizes.
 pub trait Size: std::fmt::Debug + Copy + Eq {
@@ -69,17 +75,24 @@ pub struct Vector<S: Size, V: VectorSymbolicArchitecture> {
 
 impl<S: Size, V: VectorSymbolicArchitecture> Vector<S, V> {
     pub(crate) fn new(vsa: V, size: S, data: V::Storage) -> Self {
+        assert!(
+            V::valid_size(size),
+            "invalid vector size for the architecture"
+        );
         Self { size, vsa, data }
     }
 
     /// Create a random vector.
-    pub fn random(vsa: &V, size: S) -> Self {
+    pub fn random(vsa: &V, size: S) -> Option<Self> {
+        if !V::valid_size(size) {
+            return None;
+        }
         let data = vsa.random(size.size());
-        Self {
+        Some(Self {
             size,
             vsa: vsa.clone(),
             data,
-        }
+        })
     }
 
     /// Permute the vector.
@@ -99,6 +112,30 @@ impl<S: Size, V: VectorSymbolicArchitecture> Vector<S, V> {
             "cannot compute similarity of vectors of different sizes"
         );
         V::similarity(&self.data, &other.data)
+    }
+}
+
+impl<V: VectorSymbolicArchitecture> Vector<Dynamic, V> {
+    /// Try to parse a vector from primitives.
+    pub fn parse(vsa: V, data: &[f64]) -> Option<Self> {
+        let size = Dynamic(data.len());
+        let data = V::Storage::parse(data);
+        if !V::valid_size(size) {
+            return None;
+        }
+        Some(Self { size, vsa, data })
+    }
+}
+
+impl<const N: usize, V: VectorSymbolicArchitecture> Vector<Fixed<N>, V> {
+    /// Try to parse a vector from primitives.
+    pub fn parse(vsa: V, data: &[f64]) -> Option<Self> {
+        let size = Fixed::<N>;
+        if data.len() != N || !V::valid_size(size) {
+            return None;
+        }
+        let data = V::Storage::parse(data);
+        Some(Self { size, vsa, data })
     }
 }
 
@@ -244,6 +281,70 @@ impl<'a, S: Size, V: VectorSymbolicArchitecture> Mul<&'a Vector<S, V>> for &Vect
             size: self.size,
             vsa: self.vsa.clone(),
             data,
+        }
+    }
+}
+
+impl<S: Size, V: NonSelfInverseVectorSymbolicArchitecture> std::ops::Neg for Vector<S, V> {
+    type Output = Self;
+
+    fn neg(self) -> Self::Output {
+        let data = V::inverse(&self.data);
+        Self {
+            size: self.size,
+            vsa: self.vsa,
+            data,
+        }
+    }
+}
+
+impl<S: Size, V: NonSelfInverseVectorSymbolicArchitecture> std::ops::Neg for &Vector<S, V> {
+    type Output = Vector<S, V>;
+
+    fn neg(self) -> Self::Output {
+        let data = V::inverse(&self.data);
+        Vector {
+            size: self.size,
+            vsa: self.vsa.clone(),
+            data,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct VectorIterator<'a, S: Size, V: VectorSymbolicArchitecture> {
+    vector: &'a Vector<S, V>,
+    index: usize,
+}
+
+impl<'a, S: Size, V: VectorSymbolicArchitecture> Iterator for VectorIterator<'a, S, V> {
+    type Item = <<V as VectorSymbolicArchitecture>::Storage as Storage>::Primitive;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index >= self.vector.size.size() {
+            return None;
+        }
+        let value = self.vector.data[self.index];
+        self.index += 1;
+        Some(value)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.vector.size.size() - self.index;
+        (remaining, Some(remaining))
+    }
+}
+
+impl<'a, S: Size, V: VectorSymbolicArchitecture> ExactSizeIterator for VectorIterator<'a, S, V> {}
+
+impl<'a, S: Size, V: VectorSymbolicArchitecture> IntoIterator for &'a Vector<S, V> {
+    type Item = <<V as VectorSymbolicArchitecture>::Storage as Storage>::Primitive;
+    type IntoIter = VectorIterator<'a, S, V>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        VectorIterator {
+            vector: self,
+            index: 0,
         }
     }
 }

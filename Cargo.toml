@@ -1,6 +1,6 @@
 [package]
 name = "polars-vsa"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Type-safe Vector Symbolic Architectures with Polars-backed storage and expression execution."
@@ -14,6 +14,7 @@ categories = ["algorithms", "data-structures", "science"]
 
 [dependencies]
 bitvec = "1.0.1"
+num-traits = "0.2.19"
 parking_lot = "0.12.5"
 polars = { version = "0.53.0", features = ["dtype-categorical"] }
 rand = "0.10.1"

@@ -21,16 +21,27 @@ class Fixture:
     v2: list[float]
     bundled: list[float]
     bound: list[float]
+    inverse: list[float]
     permuted: list[float]
     similarity: float
 
     @classmethod
     def calculate(cls, v1: "torchhd.VSATensor", v2: "torchhd.VSATensor") -> Fixture:
+        import torchhd
+
+        if hasattr(v1, "inverse"):
+            inverse = v1.inverse()
+        elif hasattr(torchhd, "inverse"):
+            inverse = torchhd.inverse(v1)
+        else:
+            raise RuntimeError("TorchHD inverse operation not found")
+
         return cls(
             v1=v1.tolist(),
             v2=v2.tolist(),
             bundled=v1.bundle(v2).tolist(),
             bound=v1.bind(v2).tolist(),
+            inverse=inverse.tolist(),
             permuted=v1.permute(3).tolist(),
             similarity=v1.cosine_similarity(v2).item(),
         )
@@ -52,7 +63,7 @@ def main() -> None:
     with input_path.open() as f:
         input_data = json.load(f)
 
-    # Generate reference data for BSC and MAP architectures.
+    # Generate reference data for BSC, MAP, HRR and VTB architectures.
     reference_data = {}
     for arch_name, vectors in input_data.items():
         if arch_name == "BSC":
@@ -61,6 +72,12 @@ def main() -> None:
         elif arch_name == "MAP":
             v1 = torchhd.MAPTensor(torch.tensor(vectors["v1"]))
             v2 = torchhd.MAPTensor(torch.tensor(vectors["v2"]))
+        elif arch_name == "HRR":
+            v1 = torchhd.HRRTensor(torch.tensor(vectors["v1"]))
+            v2 = torchhd.HRRTensor(torch.tensor(vectors["v2"]))
+        elif arch_name == "VTB":
+            v1 = torchhd.VTBTensor(torch.tensor(vectors["v1"]))
+            v2 = torchhd.VTBTensor(torch.tensor(vectors["v2"]))
         else:
             raise ValueError(f"Unknown architecture: {arch_name}")
         reference_data[arch_name] = Fixture.calculate(v1, v2)
