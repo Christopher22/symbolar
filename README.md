@@ -8,7 +8,7 @@ Add the crate to your project:
 
 ```toml
 [dependencies]
-symbolar = { git = "https://github.com/Christopher22/polars-vsa.git"}
+symbolar = { git = "https://github.com/Christopher22/symbolar.git"}
 ```
 
 Additionally, you may want to build the Python binding. The development container already contains everything to build the package:
@@ -96,6 +96,10 @@ To run the Python tests (including the Dollar-in-Mexico test), you can just run:
 cd python
 pytest -q
 ```
+
+## Web Demo
+
+The repository also contains a browser demo in [web/README.md](web/README.md). It builds the Rust crate without the `polars` feature to WebAssembly and exposes an interactive storage list where queries color-code elements by similarity.
 
 
 ## License

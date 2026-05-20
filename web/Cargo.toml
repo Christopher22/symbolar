@@ -1,0 +1,16 @@
+[package]
+name = "web"
+version = "0.1.0"
+authors = ["Christopher Gundler <christopher@gundler.de>"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+dioxus = { version = "0.7.1", features = [] }
+dioxus_components = "0.1.2"
+symbolar = { path = "..", default-features = false, features = [] }
+
+[features]
+default = ["web"]
+web = ["dioxus/web"]
