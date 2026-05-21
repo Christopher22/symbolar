@@ -20,7 +20,7 @@ maturin develop
 
 ## Quick Start
 
-The following code reproduces the famous "What is the Dollar in Mexico"? example:
+The following code reproduces the famous "What is the Dollar in Mexico"? example. The documentation is available [here](https://christopher22.github.io/symbolar/docs/symbolar/).
 
 ```rust
 use symbolar::{architectures::BinarySpatterCode, Expression, Fixed, Storage};
@@ -99,7 +99,7 @@ pytest -q
 
 ## Web Demo
 
-The repository also contains a browser demo in [web/README.md](web/README.md). It builds the Rust crate without the `polars` feature to WebAssembly and exposes an interactive storage list where queries color-code elements by similarity.
+The repository also contains a [browser demo](https://christopher22.github.io/symbolar/). It builds the Rust crate without the `polars` feature to WebAssembly and exposes an interactive storage list where queries color-code elements by similarity.
 
 
 ## License

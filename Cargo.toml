@@ -7,8 +7,8 @@ description = "Type-safe, Polars-compatible Vector Symbolic Architectures with s
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/Christopher22/symbolar"
-homepage = "https://github.com/Christopher22/symbolar"
-documentation = "https://christopher22.github.io/symbolar/symbolar/"
+homepage = "https://christopher22.github.io/symbolar/"
+documentation = "https://christopher22.github.io/symbolar/docs/symbolar/"
 keywords = ["vsa", "hyperdimensional", "polars", "symbolic", "vectors"]
 categories = ["algorithms", "data-structures", "science"]
 

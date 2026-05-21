@@ -57,7 +57,7 @@ jobs:
           cargo doc --no-deps
       - name: Build Dioxus web app
         working-directory: web
-        run: dx build --web --release --package web --debug-symbols false
+        run: dx build --web --release --package web --debug-symbols false --base-path "/${{ github.event.repository.name }}/"
       - name: Assemble Pages site
         run: |
           mkdir -p target/pages
