@@ -44,15 +44,30 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+      - name: Set up Rust toolchain
+        run: rustup update stable && rustup default stable
+      - name: Install Dioxus CLI
+        run: cargo install dioxus-cli --locked --version 0.7.9
+      - name: Add wasm target
+        run: rustup target add wasm32-unknown-unknown
       - name: Setup Pages
         uses: actions/configure-pages@v5
-      - name: Re‑build documentation
+      - name: Re-build documentation
         run: |
           cargo doc --no-deps
+      - name: Build Dioxus web app
+        working-directory: web
+        run: dx build --web --release --package web --debug-symbols false
+      - name: Assemble Pages site
+        run: |
+          mkdir -p target/pages
+          cp -R web/target/dx/web/release/web/public/. target/pages/
+          mkdir -p target/pages/docs
+          cp -R target/doc/. target/pages/docs/
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: './target/doc/'
+          path: './target/pages/'
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4

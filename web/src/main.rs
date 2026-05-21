@@ -12,10 +12,10 @@ use symbolar::{
 const FAVICON: Asset = asset!("/assets/favicon.ico");
 const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 
-const MIN_DIMENSIONS: usize = 128;
-const MAX_DIMENSIONS: usize = 4096;
+const MIN_DIMENSIONS: usize = 5000;
+const MAX_DIMENSIONS: usize = 50_000;
 const DIMENSION_STEP: usize = 128;
-const DEFAULT_DIMENSIONS: usize = 1024;
+const DEFAULT_DIMENSIONS: usize = 10000;
 
 fn main() {
     dioxus::launch(App);
