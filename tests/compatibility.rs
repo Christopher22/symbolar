@@ -1,5 +1,5 @@
 use symbolar::{
-    Dynamic, Vector,
+    Dynamic, Normalized, Vector,
     architectures::{Storage, VectorSymbolicArchitecture},
 };
 
@@ -43,25 +43,25 @@ impl Fixure {
         &self,
         name: &str,
         vsa: &V,
-        bundle_deterministic: bool,
         compare: C,
     ) where
         <V::Storage as Storage>::Primitive: PartialOrd + Copy + std::fmt::Display,
     {
-        let v1 = Vector::<Dynamic, V>::parse(vsa.clone(), &self.v1).expect("valid vector");
-        let v2 = Vector::<Dynamic, V>::parse(vsa.clone(), &self.v2).expect("valid vector");
+        let v1 = Vector::<Dynamic, V, Normalized<V>>::parse(vsa.clone(), &self.v1)
+            .expect("valid vector");
+        let v2 = Vector::<Dynamic, V, Normalized<V>>::parse(vsa.clone(), &self.v2)
+            .expect("valid vector");
 
-        let bound_ref =
-            Vector::<Dynamic, V>::parse(vsa.clone(), &self.bound).expect("valid vector");
-        let permuted_ref =
-            Vector::<Dynamic, V>::parse(vsa.clone(), &self.permuted).expect("valid vector");
+        let bound_ref = Vector::<Dynamic, V, Normalized<V>>::parse(vsa.clone(), &self.bound)
+            .expect("valid vector");
+        let permuted_ref = Vector::<Dynamic, V, Normalized<V>>::parse(vsa.clone(), &self.permuted)
+            .expect("valid vector");
         let similarity = v1.similarity(&v2);
         let bound = &v1 * &v2;
         let permuted = v1.clone().permute(3); // Arbitrary shift for testing
 
-        assert_eq!(
-            similarity - self.similarity < 1e-6,
-            true,
+        assert!(
+            (similarity - self.similarity).abs() < 1e-6,
             "{}: Similarity does not match reference",
             name
         );
@@ -80,19 +80,6 @@ impl Fixure {
             compare,
             "Permuted vector does not match reference",
         );
-
-        if bundle_deterministic {
-            let bundled_ref =
-                Vector::<Dynamic, V>::parse(vsa.clone(), &self.bundled).expect("valid vector");
-            let bundled = v1 + v2;
-            assert_close(
-                name,
-                bundled.into_iter(),
-                bundled_ref.into_iter(),
-                compare,
-                "Bundled vector does not match reference",
-            );
-        }
     }
 }
 
@@ -132,12 +119,13 @@ fn test_compatibility_with_torchhd() {
         match arch_name.as_str() {
             "BSC" => {
                 let bsc = symbolar::architectures::BinarySpatterCode::<u8>::new(42);
-                fixture.test(arch_name.as_str(), &bsc, false, ExactCompare);
+                fixture.test(arch_name.as_str(), &bsc, ExactCompare);
 
-                let v1 =
-                    Vector::<Dynamic, _>::parse(bsc.clone(), &fixture.v1).expect("valid vector");
-                let inverse_ref = Vector::<Dynamic, _>::parse(bsc.clone(), &fixture.inverse)
-                    .expect("valid inverse vector");
+                let v1 = Vector::<Dynamic, _, Normalized<_>>::parse(bsc.clone(), &fixture.v1)
+                    .expect("valid vector");
+                let inverse_ref =
+                    Vector::<Dynamic, _, Normalized<_>>::parse(bsc.clone(), &fixture.inverse)
+                        .expect("valid inverse vector");
                 assert_close(
                     arch_name.as_str(),
                     v1.into_iter(),
@@ -148,12 +136,26 @@ fn test_compatibility_with_torchhd() {
             }
             "MAP" => {
                 let map = symbolar::architectures::MultiplyAddPermute::<u8>::new(42);
-                fixture.test(arch_name.as_str(), &map, true, ExactCompare);
+                fixture.test(arch_name.as_str(), &map, ExactCompare);
 
-                let v1 =
-                    Vector::<Dynamic, _>::parse(map.clone(), &fixture.v1).expect("valid vector");
-                let inverse_ref = Vector::<Dynamic, _>::parse(map.clone(), &fixture.inverse)
-                    .expect("valid inverse vector");
+                let v1 = Vector::<Dynamic, _, Normalized<_>>::parse(map.clone(), &fixture.v1)
+                    .expect("valid vector");
+                let v2 = Vector::<Dynamic, _, Normalized<_>>::parse(map.clone(), &fixture.v2)
+                    .expect("valid vector");
+                let bundled = v1 + v2;
+                assert_close(
+                    arch_name.as_str(),
+                    bundled.into_iter(),
+                    fixture.bundled.iter().map(|v| *v as isize),
+                    ExactCompare,
+                    "Bundled vector does not match reference",
+                );
+
+                let v1 = Vector::<Dynamic, _, Normalized<_>>::parse(map.clone(), &fixture.v1)
+                    .expect("valid vector");
+                let inverse_ref =
+                    Vector::<Dynamic, _, Normalized<_>>::parse(map.clone(), &fixture.inverse)
+                        .expect("valid inverse vector");
                 assert_close(
                     arch_name.as_str(),
                     v1.into_iter(),
@@ -167,18 +169,27 @@ fn test_compatibility_with_torchhd() {
                     f64,
                     rand::rngs::StdRng,
                 >::new(42);
-                fixture.test(
+                fixture.test(arch_name.as_str(), &hrr, FloatCompare { tolerance: 1e-6 });
+
+                let v1 = Vector::<Dynamic, _, Normalized<_>>::parse(hrr.clone(), &fixture.v1)
+                    .expect("valid vector");
+                let v2 = Vector::<Dynamic, _, Normalized<_>>::parse(hrr.clone(), &fixture.v2)
+                    .expect("valid vector");
+                let bundled = v1 + v2;
+                assert_close(
                     arch_name.as_str(),
-                    &hrr,
-                    true,
+                    bundled.into_iter(),
+                    fixture.bundled.iter().copied(),
                     FloatCompare { tolerance: 1e-6 },
+                    "Bundled vector does not match reference",
                 );
 
-                let v1 =
-                    Vector::<Dynamic, _>::parse(hrr.clone(), &fixture.v1).expect("valid vector");
+                let v1 = Vector::<Dynamic, _, Normalized<_>>::parse(hrr.clone(), &fixture.v1)
+                    .expect("valid vector");
                 let inverse = -&v1;
-                let inverse_ref = Vector::<Dynamic, _>::parse(hrr.clone(), &fixture.inverse)
-                    .expect("valid inverse vector");
+                let inverse_ref =
+                    Vector::<Dynamic, _, Normalized<_>>::parse(hrr.clone(), &fixture.inverse)
+                        .expect("valid inverse vector");
                 assert_close(
                     arch_name.as_str(),
                     inverse.into_iter(),
@@ -192,18 +203,27 @@ fn test_compatibility_with_torchhd() {
                     f64,
                     rand::rngs::StdRng,
                 >::new(42);
-                fixture.test(
+                fixture.test(arch_name.as_str(), &vtb, FloatCompare { tolerance: 0.001 });
+
+                let v1 = Vector::<Dynamic, _, Normalized<_>>::parse(vtb.clone(), &fixture.v1)
+                    .expect("valid vector");
+                let v2 = Vector::<Dynamic, _, Normalized<_>>::parse(vtb.clone(), &fixture.v2)
+                    .expect("valid vector");
+                let bundled = v1 + v2;
+                assert_close(
                     arch_name.as_str(),
-                    &vtb,
-                    true,
-                    FloatCompare { tolerance: 0.001 },
+                    bundled.into_iter(),
+                    fixture.bundled.iter().copied(),
+                    FloatCompare { tolerance: 1e-6 },
+                    "Bundled vector does not match reference",
                 );
 
-                let v1 =
-                    Vector::<Dynamic, _>::parse(vtb.clone(), &fixture.v1).expect("valid vector");
+                let v1 = Vector::<Dynamic, _, Normalized<_>>::parse(vtb.clone(), &fixture.v1)
+                    .expect("valid vector");
                 let inverse = -&v1;
-                let inverse_ref = Vector::<Dynamic, _>::parse(vtb.clone(), &fixture.inverse)
-                    .expect("valid inverse vector");
+                let inverse_ref =
+                    Vector::<Dynamic, _, Normalized<_>>::parse(vtb.clone(), &fixture.inverse)
+                        .expect("valid inverse vector");
                 assert_close(
                     arch_name.as_str(),
                     inverse.into_iter(),

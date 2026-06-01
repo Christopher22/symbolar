@@ -1,0 +1,16 @@
+Enable all features supported by the current CPU
+
+RUSTFLAGS="-C target-cpu=native"
+
+Enable all features supported by the current CPU, and enable full use of AVX512
+
+RUSTFLAGS="-C target-cpu=native -C target-feature=-prefer-256-bit"
+
+Enable all features supported by CPUs more recent than haswell (2013)
+
+RUSTFLAGS="-C target-cpu=haswell"
+
+For a full list of features and target CPUs use
+
+$ rustc --print target-cpus
+$ rustc --print target-features

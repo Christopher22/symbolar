@@ -1,4 +1,7 @@
-use crate::{Size, Storage, Value, Vector, VectorIndex, architectures::VectorSymbolicArchitecture};
+use crate::{
+    Normalized, Size, Storage, Value, Vector, VectorIndex,
+    architectures::VectorSymbolicArchitecture,
+};
 
 /// A queryable item for a vector storage.
 pub trait Queryable {
@@ -12,7 +15,7 @@ pub trait Queryable {
     fn query<'a, S: Size, V: VectorSymbolicArchitecture>(
         &self,
         storage: &'a Storage<S, V>,
-    ) -> Option<&'a Vector<S, V>> {
+    ) -> Option<&'a Vector<S, V, Normalized<V>>> {
         Self::query_index(self, storage).map(|index| &storage.vectors.vectors[index.0])
     }
 }
@@ -30,7 +33,7 @@ impl Queryable for VectorIndex {
     fn query<'a, S: Size, V: VectorSymbolicArchitecture>(
         &self,
         storage: &'a Storage<S, V>,
-    ) -> Option<&'a Vector<S, V>> {
+    ) -> Option<&'a Vector<S, V, Normalized<V>>> {
         storage.vectors.get_by_index(*self)
     }
 
@@ -53,7 +56,7 @@ impl Queryable for &str {
     fn query<'a, S: Size, V: VectorSymbolicArchitecture>(
         &self,
         storage: &'a Storage<S, V>,
-    ) -> Option<&'a Vector<S, V>> {
+    ) -> Option<&'a Vector<S, V, Normalized<V>>> {
         storage.vectors.get_by_name(self)
     }
 }

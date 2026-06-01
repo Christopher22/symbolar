@@ -1,4 +1,4 @@
-use std::{borrow::Borrow, sync::Arc};
+use std::sync::Arc;
 
 use rand::{RngExt, SeedableRng};
 
@@ -57,7 +57,7 @@ impl<R: FloatResolution, Rng: rand::Rng> VectorSymbolicArchitecture
     for HolographicReducedRepresentation<R, Rng>
 {
     type Storage = Vec<R>;
-    type StorageMulti = Vec<R>;
+    type Accumulator = Vec<R>;
 
     fn random(&self, size: usize) -> Self::Storage {
         let mut rng = self.rng.write();
@@ -75,7 +75,11 @@ impl<R: FloatResolution, Rng: rand::Rng> VectorSymbolicArchitecture
         out
     }
 
-    fn normalize(&self, storage: Self::StorageMulti) -> Self::Storage {
+    fn denormalize(storage: Self::Storage) -> Self::Accumulator {
+        storage
+    }
+
+    fn normalize(&self, storage: Self::Accumulator) -> Self::Storage {
         let norm = Self::norm(&storage);
         if norm == R::ZERO {
             return storage;
@@ -84,33 +88,26 @@ impl<R: FloatResolution, Rng: rand::Rng> VectorSymbolicArchitecture
         storage.into_iter().map(|value| value / norm).collect()
     }
 
-    fn bundle(&self, a: &Self::Storage, b: &Self::Storage) -> Self::Storage {
-        self.bundle_multi([a, b].into_iter()).expect("two vectors")
+    fn bundle(&self, accumulator: &mut Self::Accumulator, vector: &Self::Storage) {
+        accumulator
+            .iter_mut()
+            .zip(vector.iter())
+            .for_each(|(acc, value)| {
+                *acc += *value;
+            })
     }
 
-    fn bundle_multi<I>(&self, mut vectors: impl Iterator<Item = I>) -> Option<Self::StorageMulti>
-    where
-        I: Borrow<Self::Storage>,
-    {
-        let first_borrowed = vectors.next()?;
-        let first = first_borrowed.borrow();
-        let mut out = first.clone();
-        let mut total = 1usize;
-
-        for vector_borrowed in vectors {
-            let vector = vector_borrowed.borrow();
-            first.enforce_constraints(vector);
-            total += 1;
-            for (sum, value) in out.iter_mut().zip(vector.iter()) {
-                *sum += *value;
-            }
-        }
-
-        if total < 2 {
-            return None;
-        }
-
-        Some(out)
+    fn bundle_with_accumulator(
+        &self,
+        accumulator: &mut Self::Accumulator,
+        vector: &Self::Accumulator,
+    ) {
+        accumulator
+            .iter_mut()
+            .zip(vector.iter())
+            .for_each(|(acc, value)| {
+                *acc += *value;
+            })
     }
 
     fn bind(a: &Self::Storage, b: &Self::Storage) -> Self::Storage {
@@ -130,20 +127,18 @@ impl<R: FloatResolution, Rng: rand::Rng> VectorSymbolicArchitecture
         out
     }
 
-    fn permute(a: &Self::Storage, shifts: usize) -> Self::Storage {
+    fn permute(a: &mut Self::Storage, shifts: usize) {
         let len = a.len();
         if len == 0 {
-            return a.clone();
+            return;
         }
 
         let shift = shifts % len;
         if shift == 0 {
-            return a.clone();
+            return;
         }
 
-        let mut out = a.clone();
-        out.rotate_right(shift);
-        out
+        a.rotate_right(shift);
     }
 
     fn similarity(a: &Self::Storage, b: &Self::Storage) -> f64 {
@@ -162,15 +157,13 @@ impl<R: FloatResolution, Rng: rand::Rng> VectorSymbolicArchitecture
 impl<R: FloatResolution, Rng: rand::Rng> NonSelfInverseVectorSymbolicArchitecture
     for HolographicReducedRepresentation<R, Rng>
 {
-    fn inverse(a: &Self::Storage) -> Self::Storage {
+    fn inverse(a: &mut Self::Storage) {
         if a.is_empty() {
-            return a.clone();
+            return;
         }
 
-        let mut out = a.clone();
-        out.reverse();
-        out.rotate_right(1);
-        out
+        a.reverse();
+        a.rotate_right(1);
     }
 }
 
@@ -201,9 +194,9 @@ mod tests {
 
     #[test]
     fn inverse_matches_stable_hrr_inverse() {
-        let a = vec![0.2, -0.4, 0.1, 0.6, -0.3];
-        let inv = HolographicReducedRepresentation::<f64, rand::rngs::StdRng>::inverse(&a);
-        assert_eq!(inv, vec![0.2, -0.3, 0.6, 0.1, -0.4]);
+        let mut a = vec![0.2, -0.4, 0.1, 0.6, -0.3];
+        HolographicReducedRepresentation::<f64, rand::rngs::StdRng>::inverse(&mut a);
+        assert_eq!(a, vec![0.2, -0.3, 0.6, 0.1, -0.4]);
     }
 
     #[test]

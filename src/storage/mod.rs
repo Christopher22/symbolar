@@ -7,7 +7,9 @@ use std::{borrow::Cow, collections::HashMap};
 
 #[cfg(feature = "polars")]
 use self::polars_util::Columns;
-use crate::{Expression, Size, UnknownValue, Vector, architectures::VectorSymbolicArchitecture};
+use crate::{
+    Expression, Normalized, Size, UnknownValue, Vector, architectures::VectorSymbolicArchitecture,
+};
 
 #[cfg(feature = "polars")]
 pub use self::polars_util::{Column, Subset, SubsetError};
@@ -20,7 +22,7 @@ pub struct VectorIndex(pub(crate) usize);
 
 #[derive(Debug, Clone)]
 struct NamedVectors<S: Size, V: VectorSymbolicArchitecture> {
-    vectors: Vec<Vector<S, V>>,
+    vectors: Vec<Vector<S, V, Normalized<V>>>,
     names: HashMap<String, VectorIndex>,
     vsa: V,
     size: S,
@@ -39,11 +41,11 @@ impl<S: Size, V: VectorSymbolicArchitecture> NamedVectors<S, V> {
         })
     }
 
-    fn get_by_index(&self, index: VectorIndex) -> Option<&Vector<S, V>> {
+    fn get_by_index(&self, index: VectorIndex) -> Option<&Vector<S, V, Normalized<V>>> {
         self.vectors.get(index.0)
     }
 
-    fn get_by_name(&self, name: &str) -> Option<&Vector<S, V>> {
+    fn get_by_name(&self, name: &str) -> Option<&Vector<S, V, Normalized<V>>> {
         self.names.get(name).map(|&index| &self.vectors[index.0])
     }
 
@@ -69,7 +71,7 @@ impl<S: Size, V: VectorSymbolicArchitecture> Storage<S, V> {
     fn execute_expression<'x, 'y: 'x>(
         &'x self,
         expression: &'y Expression,
-    ) -> Result<Cow<'x, Vector<S, V>>, UnknownValue> {
+    ) -> Result<Cow<'x, Vector<S, V, Normalized<V>>>, UnknownValue> {
         expression.evaluate(|name| self.get(&name).map(Cow::Borrowed))
     }
 
@@ -83,7 +85,7 @@ impl<S: Size, V: VectorSymbolicArchitecture> Storage<S, V> {
     }
 
     /// Add a new vector with the given name to the storage. If it already exists, return the existing vector.
-    pub fn push(&mut self, name: impl Into<String>) -> &Vector<S, V> {
+    pub fn push(&mut self, name: impl Into<String>) -> &Vector<S, V, Normalized<V>> {
         let index = self.vectors.get_or_insert(name);
         &self.vectors.vectors[index.0]
     }
@@ -96,7 +98,7 @@ impl<S: Size, V: VectorSymbolicArchitecture> Storage<S, V> {
     }
 
     /// Retrieve a vector by a query.
-    pub fn get<Q: Queryable>(&self, query: &Q) -> Option<&Vector<S, V>> {
+    pub fn get<Q: Queryable>(&self, query: &Q) -> Option<&Vector<S, V, Normalized<V>>> {
         query.query(self)
     }
 
@@ -120,14 +122,14 @@ impl<S: Size, V: VectorSymbolicArchitecture> Storage<S, V> {
     pub fn execute<'x, 'y: 'x>(
         &'x self,
         expression: &'y Expression,
-    ) -> Result<Cow<'x, Vector<S, V>>, UnknownValue> {
+    ) -> Result<Cow<'x, Vector<S, V, Normalized<V>>>, UnknownValue> {
         self.execute_expression(expression)
     }
 
     /// Compute the cosine similarity between a given vector and all vectors selected by a selector.
-    pub fn cosine_similarities<'a, I: Selector<S, V> + 'a>(
+    pub fn similarities<'a, I: Selector<S, V> + 'a>(
         &'a self,
-        vector: &'a Vector<S, V>,
+        vector: &'a Vector<S, V, Normalized<V>>,
         selector: &'a I,
     ) -> impl Iterator<Item = (VectorIndex, f64)> + 'a {
         selector
@@ -138,10 +140,10 @@ impl<S: Size, V: VectorSymbolicArchitecture> Storage<S, V> {
     /// Find the most similar vector to a given vector among those selected by a selector.
     pub fn find<I: Selector<S, V>>(
         &self,
-        vector: &Vector<S, V>,
+        vector: &Vector<S, V, Normalized<V>>,
         selector: &I,
     ) -> Option<VectorIndex> {
-        self.cosine_similarities(vector, selector)
+        self.similarities(vector, selector)
             .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
             .map(|(index, _)| index)
     }
@@ -175,7 +177,7 @@ impl<S: Size, V: VectorSymbolicArchitecture> Storage<S, V> {
 }
 
 impl<S: Size, V: VectorSymbolicArchitecture, Q: Queryable> std::ops::Index<Q> for Storage<S, V> {
-    type Output = Vector<S, V>;
+    type Output = Vector<S, V, Normalized<V>>;
 
     fn index(&self, query: Q) -> &Self::Output {
         query.query(self).expect("valid reference")
@@ -260,7 +262,7 @@ impl<'a, S: Size, V: VectorSymbolicArchitecture, I: 'a + Selector<S, V>> VectorI
 impl<'a, S: Size, V: VectorSymbolicArchitecture, I: Selector<S, V>> Iterator
     for VectorIter<'a, S, V, I>
 {
-    type Item = &'a Vector<S, V>;
+    type Item = &'a Vector<S, V, Normalized<V>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.iterator

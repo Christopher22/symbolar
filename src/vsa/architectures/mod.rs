@@ -10,7 +10,6 @@ use num_traits::float::Float;
 use num_traits::int::PrimInt;
 use num_traits::{AsPrimitive, ConstOne, ConstZero, NumAssign, Unsigned};
 use rand::RngExt;
-use std::borrow::Borrow;
 
 use crate::Size;
 
@@ -24,7 +23,7 @@ pub trait VectorSymbolicArchitecture: Clone {
     /// The underlying storage of a single vector.
     type Storage: PrimaryStorage;
     /// The underlying storage of a multi vector.
-    type StorageMulti: Storage;
+    type Accumulator: Storage;
 
     /// Checks if a size of a vector is valid for the architecture.
     fn valid_size<S: Size>(_size: S) -> bool {
@@ -34,24 +33,30 @@ pub trait VectorSymbolicArchitecture: Clone {
     /// Create a random vector in the architecture.
     fn random(&self, size: usize) -> Self::Storage;
 
-    /// Normalize a multi-vector.
-    fn normalize(&self, storage: Self::StorageMulti) -> Self::Storage;
-    /// Bundle at least two vectors.
-    fn bundle_multi<I>(&self, vectors: impl Iterator<Item = I>) -> Option<Self::StorageMulti>
-    where
-        I: Borrow<Self::Storage>;
+    /// Normalize a accumulator.
+    fn normalize(&self, storage: Self::Accumulator) -> Self::Storage;
 
-    /// Bundle a vector and normalize it.
-    fn bundle(&self, a: &Self::Storage, b: &Self::Storage) -> Self::Storage {
-        self.normalize(self.bundle_multi([a, b].into_iter()).expect("two vectors"))
-    }
+    /// Cast a normalized vector to an unnormalized accumulator.
+    fn denormalize(storage: Self::Storage) -> Self::Accumulator;
+
+    /// Permute a vector.
+    fn permute(a: &mut Self::Storage, shifts: usize);
+
+    /// Calculate a appopiate similarity for the architecture.
+    fn similarity(a: &Self::Storage, b: &Self::Storage) -> f64;
 
     /// Bind two vectors.
     fn bind(a: &Self::Storage, b: &Self::Storage) -> Self::Storage;
-    /// Permute a vector.
-    fn permute(a: &Self::Storage, shifts: usize) -> Self::Storage;
-    /// Calculate a appopiate similarity for the architecture.
-    fn similarity(a: &Self::Storage, b: &Self::Storage) -> f64;
+
+    /// Bundle a an accumulator with a vector.
+    fn bundle(&self, accumulator: &mut Self::Accumulator, vector: &Self::Storage);
+
+    /// Bundle a an accumulator with another accumulator.
+    fn bundle_with_accumulator(
+        &self,
+        accumulator: &mut Self::Accumulator,
+        vector: &Self::Accumulator,
+    );
 }
 
 /// A vector symbolic architecture where the bind operation is self-inverse.
@@ -60,7 +65,7 @@ pub trait SelfInverseVectorSymbolicArchitecture: VectorSymbolicArchitecture {}
 /// A vector symbolic architecture where the bind operation is not self-inverse.
 pub trait NonSelfInverseVectorSymbolicArchitecture: VectorSymbolicArchitecture {
     /// Inverse a vector.
-    fn inverse(a: &Self::Storage) -> Self::Storage;
+    fn inverse(a: &mut Self::Storage);
 }
 
 /// A underyling data type.
@@ -69,7 +74,7 @@ pub trait Storage:
     std::fmt::Debug + Clone + PartialEq + std::ops::Index<usize, Output = Self::Primitive>
 {
     /// The underyling primitive type of the storage which can be read.
-    type Primitive: Copy + PartialEq + PartialOrd;
+    type Primitive: std::fmt::Display + Copy + PartialEq + PartialOrd;
 
     /// The length of the storage.
     fn len(&self) -> usize;
@@ -163,11 +168,11 @@ impl<R: Resolution> Storage for Vec<R> {
 
 /// A resolution of a data type.
 pub trait Resolution:
-    std::fmt::Debug + Copy + PartialOrd + NumAssign + ConstZero + ConstOne
+    std::fmt::Debug + std::fmt::Display + Copy + PartialOrd + NumAssign + ConstZero + ConstOne
 {
 }
 impl<T> Resolution for T where
-    T: std::fmt::Debug + Copy + PartialOrd + NumAssign + ConstZero + ConstOne
+    T: std::fmt::Debug + std::fmt::Display + Copy + PartialOrd + NumAssign + ConstZero + ConstOne
 {
 }
 

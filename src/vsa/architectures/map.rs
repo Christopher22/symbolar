@@ -107,46 +107,46 @@ impl<R: UIntResolution, RM: IntResolution, Rng: rand::Rng> VectorSymbolicArchite
     for MultiplyAddPermute<R, RM, Rng>
 {
     type Storage = PlusMinusOnes<R>;
-    type StorageMulti = Vec<RM>;
+    type Accumulator = Vec<RM>;
 
-    fn normalize(&self, storage: Self::StorageMulti) -> Self::Storage {
+    fn normalize(&self, storage: Self::Accumulator) -> Self::Storage {
         // MAP keeps tie votes (0) as +1 to match TorchHD's sign(0) behavior.
         let zero = -RM::ONE + RM::ONE;
         PlusMinusOnes(storage.into_iter().map(|v| v >= zero).collect())
+    }
+
+    fn denormalize(storage: Self::Storage) -> Self::Accumulator {
+        storage
+            .0
+            .into_iter()
+            .map(|value| Self::bit_to_resolution(value))
+            .collect()
     }
 
     fn random(&self, size: usize) -> Self::Storage {
         PlusMinusOnes::random(&mut self.rng.write(), size)
     }
 
-    fn bundle_multi<I>(&self, mut vectors: impl Iterator<Item = I>) -> Option<Self::StorageMulti>
-    where
-        I: std::borrow::Borrow<Self::Storage>,
-    {
-        let first_borrowed = vectors.next()?;
-        let first = first_borrowed.borrow();
-        let len = first.len();
-        let mut out = vec![RM::ZERO; len];
-        let mut total = 1usize;
+    fn bundle(&self, accumulator: &mut Self::Accumulator, vector: &Self::Storage) {
+        accumulator
+            .iter_mut()
+            .zip(vector.0.iter())
+            .for_each(|(acc, bit)| {
+                *acc += Self::bit_to_resolution(*bit);
+            })
+    }
 
-        for (sum, bit) in out.iter_mut().zip(first.0.iter().by_vals()) {
-            *sum += Self::bit_to_resolution(bit);
-        }
-
-        for vector_borrowed in vectors {
-            let vector = vector_borrowed.borrow();
-            first.enforce_constraints(vector);
-            total += 1;
-            for (sum, bit) in out.iter_mut().zip(vector.0.iter().by_vals()) {
-                *sum += Self::bit_to_resolution(bit);
-            }
-        }
-
-        if total < 2 {
-            return None;
-        }
-
-        Some(out)
+    fn bundle_with_accumulator(
+        &self,
+        accumulator: &mut Self::Accumulator,
+        vector: &Self::Accumulator,
+    ) {
+        accumulator
+            .iter_mut()
+            .zip(vector.iter())
+            .for_each(|(acc, value)| {
+                *acc += *value;
+            })
     }
 
     fn bind(a: &Self::Storage, b: &Self::Storage) -> Self::Storage {
@@ -157,20 +157,18 @@ impl<R: UIntResolution, RM: IntResolution, Rng: rand::Rng> VectorSymbolicArchite
         PlusMinusOnes(!out)
     }
 
-    fn permute(a: &Self::Storage, shifts: usize) -> Self::Storage {
+    fn permute(a: &mut Self::Storage, shifts: usize) {
         let len = a.len();
         if len == 0 {
-            return a.clone();
+            return;
         }
 
         let shift = shifts % len;
         if shift == 0 {
-            return a.clone();
+            return;
         }
 
-        let mut out = a.0.clone();
-        out.rotate_right(shift);
-        PlusMinusOnes(out)
+        a.0.rotate_right(shift);
     }
 
     fn similarity(a: &Self::Storage, b: &Self::Storage) -> f64 {

@@ -2,7 +2,10 @@ use polars::prelude::*;
 
 use super::ColumnType;
 
-use crate::{Size, Storage, Vector, VectorIndex, architectures::VectorSymbolicArchitecture};
+use crate::{
+    Normalized, Size, Storage, Vector, VectorIndex, VectorType,
+    architectures::VectorSymbolicArchitecture,
+};
 
 /// A subset of a dataframe used to derive vectors for specific rows or the entire dataset.
 #[derive(Debug, Clone)]
@@ -82,67 +85,75 @@ impl<'a, S: Size, V: VectorSymbolicArchitecture> Subset<'a, S, V> {
         })
     }
 
-    /// Get the vectors corresponding to a specific rows.
-    pub fn bundle_rows(&self) -> Vec<Option<Vector<S, V>>> {
+    /// Get the vectors corresponding to a specific rows without normalization.
+    pub fn bundle_rows<T: VectorType<V>>(&self) -> Vec<Option<Vector<S, V, T>>> {
         (0..self.height())
             // Calculate each row
             .map(|y| {
-                self.storage
-                    .vectors
-                    .vsa
-                    .bundle_multi(
-                        (0..self.width)
-                            .map(|x| (x, self.calculate_index(x, y)))
-                            .filter_map(|(x, index)| {
-                                self.vectors[index].map(|vector_index| {
-                                    let column_vector_index = self.columns[x];
-                                    V::bind(
-                                        &self.storage.vectors.vectors[column_vector_index.0].data,
-                                        &self.storage.vectors.vectors[vector_index.0].data,
-                                    )
-                                })
-                            }),
-                    )
-                    .map(|vector_unnormalized| {
-                        let vsa = self.storage.vectors.vsa.clone();
-                        Vector::new(
-                            vsa,
-                            self.storage.vectors.size,
-                            self.storage.vectors.vsa.normalize(vector_unnormalized),
-                        )
-                    })
+                let mut bundled: Option<V::Accumulator> = None;
+
+                for x in 0..self.width {
+                    let index = self.calculate_index(x, y);
+                    let Some(vector_index) = self.vectors[index] else {
+                        continue;
+                    };
+
+                    let column_vector_index = self.columns[x];
+                    let bound = V::bind(
+                        &self.storage.vectors.vectors[column_vector_index.0].data.0,
+                        &self.storage.vectors.vectors[vector_index.0].data.0,
+                    );
+                    let value = V::denormalize(bound);
+
+                    match bundled.as_mut() {
+                        Some(acc) => self
+                            .storage
+                            .vectors
+                            .vsa
+                            .bundle_with_accumulator(acc, &value),
+                        None => bundled = Some(value),
+                    }
+                }
+
+                bundled.map(|vector_unnormalized| {
+                    let vsa = self.storage.vectors.vsa.clone();
+                    Vector::new(vsa, self.storage.vectors.size, vector_unnormalized)
+                })
             })
             .collect()
     }
 
     /// Bundle the entire dataset into a single vector.
-    pub fn bundle_dataset(&self) -> Option<Vector<S, V>> {
-        let rows = self.bundle_rows();
-        self.storage
-            .vectors
-            .vsa
-            .bundle_multi(
-                rows.iter()
-                    .filter_map(|v| v.as_ref().map(|vector| &vector.data)),
-            )
-            .map(|vector_unnormalized| {
-                let vsa = self.storage.vectors.vsa.clone();
-                Vector::new(
-                    vsa,
-                    self.storage.vectors.size,
-                    self.storage.vectors.vsa.normalize(vector_unnormalized),
-                )
-            })
+    pub fn bundle_dataset<T1: VectorType<V>, T2: VectorType<V>>(&self) -> Option<Vector<S, V, T2>> {
+        let rows = self.bundle_rows::<T1>();
+        let mut bundled: Option<V::Accumulator> = None;
+
+        for row in rows.into_iter().flatten() {
+            let value = row.data.into().0;
+            match bundled.as_mut() {
+                Some(acc) => self
+                    .storage
+                    .vectors
+                    .vsa
+                    .bundle_with_accumulator(acc, &value),
+                None => bundled = Some(value),
+            }
+        }
+
+        bundled.map(|vector_unnormalized| {
+            let vsa = self.storage.vectors.vsa.clone();
+            Vector::new(vsa, self.storage.vectors.size, vector_unnormalized)
+        })
     }
 
     /// Bind the entire dataset into a single vector.
-    pub fn bind_dataset(&self) -> Option<Vector<S, V>> {
-        let rows = self.bundle_rows();
+    pub fn bind_dataset(&self) -> Option<Vector<S, V, Normalized<V>>> {
+        let rows = self.bundle_rows::<Normalized<V>>();
         rows.into_iter().fold(None, |acc, row| match (acc, row) {
             (Some(acc_vector), Some(row_vector)) => Some(Vector::new(
                 acc_vector.vsa.clone(),
                 acc_vector.size,
-                V::bind(&acc_vector.data, &row_vector.data),
+                V::denormalize(V::bind(&acc_vector.data.0, &row_vector.data.0)),
             )),
             (None, Some(row_vector)) => Some(row_vector),
             (acc, None) => acc,
@@ -256,7 +267,9 @@ mod tests {
                 .execute(&expression)
                 .expect("valid execution")
                 .into_owned(),
-            subset.bundle_dataset().expect("valid dataset vector")
+            subset
+                .bundle_dataset::<Normalized<crate::architectures::MultiplyAddPermute<u8>>, Normalized<crate::architectures::MultiplyAddPermute<u8>>>()
+                .expect("valid dataset vector")
         );
     }
 

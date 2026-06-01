@@ -64,25 +64,117 @@ impl Size for Dynamic {
     }
 }
 
-/// A vector of a vector symbolic architecture.
+/// A trait indicating whether a vector is normalized or not.
+pub trait VectorType<V: VectorSymbolicArchitecture>:
+    std::fmt::Debug
+    + Clone
+    + PartialEq
+    + std::ops::Index<usize, Output = Self::Primitive>
+    + Into<NotNormalized<V>>
+{
+    /// The underlying primitive type of the vector which can be read.
+    type Primitive: Copy + PartialEq + PartialOrd;
+
+    /// Create a vector type from the architecture and data.
+    fn from(vsa: &V, data: V::Accumulator) -> Self;
+}
+
 #[derive(Clone)]
-pub struct Vector<S: Size, V: VectorSymbolicArchitecture> {
+/// A normalized vector payload.
+pub struct Normalized<V: VectorSymbolicArchitecture>(pub(crate) V::Storage);
+
+impl<V: VectorSymbolicArchitecture> VectorType<V> for Normalized<V> {
+    type Primitive = <V::Storage as Storage>::Primitive;
+
+    fn from(vsa: &V, data: V::Accumulator) -> Self {
+        Self(vsa.normalize(data))
+    }
+}
+
+impl<V> From<Normalized<V>> for NotNormalized<V>
+where
+    V: VectorSymbolicArchitecture,
+{
+    fn from(value: Normalized<V>) -> Self {
+        Self(V::denormalize(value.0))
+    }
+}
+
+impl<V: VectorSymbolicArchitecture> PartialEq for Normalized<V> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl<V: VectorSymbolicArchitecture> Eq for Normalized<V> where V::Storage: Eq {}
+
+impl<V: VectorSymbolicArchitecture> std::fmt::Debug for Normalized<V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Normalized").finish()
+    }
+}
+
+impl<V: VectorSymbolicArchitecture> std::ops::Index<usize> for Normalized<V> {
+    type Output = <V::Storage as Storage>::Primitive;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.0[index]
+    }
+}
+
+#[derive(Clone)]
+/// An unnormalized vector payload.
+pub struct NotNormalized<V: VectorSymbolicArchitecture>(pub(crate) V::Accumulator);
+impl<V: VectorSymbolicArchitecture> VectorType<V> for NotNormalized<V> {
+    type Primitive = <V::Accumulator as Storage>::Primitive;
+
+    fn from(_vsa: &V, data: V::Accumulator) -> Self {
+        Self(data)
+    }
+}
+
+impl<V: VectorSymbolicArchitecture> PartialEq for NotNormalized<V> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+impl<V: VectorSymbolicArchitecture> Eq for NotNormalized<V> where V::Accumulator: Eq {}
+impl<V: VectorSymbolicArchitecture> std::fmt::Debug for NotNormalized<V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("NotNormalized").finish()
+    }
+}
+impl<V: VectorSymbolicArchitecture> std::ops::Index<usize> for NotNormalized<V> {
+    type Output = <V::Accumulator as Storage>::Primitive;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.0[index]
+    }
+}
+
+#[derive(Clone)]
+/// A typed vector with architecture, size, and normalization state.
+pub struct Vector<S: Size, V: VectorSymbolicArchitecture, T: VectorType<V>> {
     /// The size of the vector.
     pub size: S,
     pub(crate) vsa: V,
-    pub(crate) data: V::Storage,
+    pub(crate) data: T,
 }
 
-impl<S: Size, V: VectorSymbolicArchitecture> Vector<S, V> {
+impl<S: Size, V: VectorSymbolicArchitecture, T: VectorType<V>> Vector<S, V, T> {
     #[cfg(feature = "polars")]
-    pub(crate) fn new(vsa: V, size: S, data: V::Storage) -> Self {
+    pub(crate) fn new(vsa: V, size: S, data: V::Accumulator) -> Self {
         assert!(
             V::valid_size(size),
             "invalid vector size for the architecture"
         );
+
+        let data = T::from(&vsa, data);
         Self { size, vsa, data }
     }
+}
 
+impl<S: Size, V: VectorSymbolicArchitecture> Vector<S, V, Normalized<V>> {
     /// Create a random vector.
     pub fn random(vsa: &V, size: S) -> Option<Self> {
         if !V::valid_size(size) {
@@ -92,17 +184,18 @@ impl<S: Size, V: VectorSymbolicArchitecture> Vector<S, V> {
         Some(Self {
             size,
             vsa: vsa.clone(),
-            data,
+            data: Normalized(data),
         })
     }
 
     /// Permute the vector.
     pub fn permute(self, shifts: usize) -> Self {
-        let data = V::permute(&self.data, shifts);
+        let mut data = self.data.0;
+        V::permute(&mut data, shifts);
         Self {
             size: self.size,
             vsa: self.vsa,
-            data,
+            data: Normalized(data),
         }
     }
 
@@ -112,11 +205,23 @@ impl<S: Size, V: VectorSymbolicArchitecture> Vector<S, V> {
             self.size, other.size,
             "cannot compute similarity of vectors of different sizes"
         );
-        V::similarity(&self.data, &other.data)
+        V::similarity(&self.data.0, &other.data.0)
     }
 }
 
-impl<V: VectorSymbolicArchitecture> Vector<Dynamic, V> {
+impl<S: Size, V: VectorSymbolicArchitecture> Vector<S, V, NotNormalized<V>> {
+    /// Normalize the vector.
+    pub fn normalize(self) -> Vector<S, V, Normalized<V>> {
+        let normalized = self.vsa.normalize(self.data.0);
+        Vector {
+            size: self.size,
+            vsa: self.vsa,
+            data: Normalized(normalized),
+        }
+    }
+}
+
+impl<V: VectorSymbolicArchitecture> Vector<Dynamic, V, Normalized<V>> {
     /// Try to parse a vector from primitives.
     pub fn parse(vsa: V, data: &[f64]) -> Option<Self> {
         let size = Dynamic(data.len());
@@ -124,11 +229,15 @@ impl<V: VectorSymbolicArchitecture> Vector<Dynamic, V> {
         if !V::valid_size(size) {
             return None;
         }
-        Some(Self { size, vsa, data })
+        Some(Self {
+            size,
+            vsa,
+            data: Normalized(data),
+        })
     }
 }
 
-impl<const N: usize, V: VectorSymbolicArchitecture> Vector<Fixed<N>, V> {
+impl<const N: usize, V: VectorSymbolicArchitecture> Vector<Fixed<N>, V, Normalized<V>> {
     /// Try to parse a vector from primitives.
     pub fn parse(vsa: V, data: &[f64]) -> Option<Self> {
         let size = Fixed::<N>;
@@ -136,11 +245,15 @@ impl<const N: usize, V: VectorSymbolicArchitecture> Vector<Fixed<N>, V> {
             return None;
         }
         let data = V::Storage::parse(data);
-        Some(Self { size, vsa, data })
+        Some(Self {
+            size,
+            vsa,
+            data: Normalized(data),
+        })
     }
 }
 
-impl<S: Size, V: VectorSymbolicArchitecture> EvaluateOps for Vector<S, V> {
+impl<S: Size, V: VectorSymbolicArchitecture> EvaluateOps for Vector<S, V, Normalized<V>> {
     fn add_many<'a, I>(mut values: I) -> Self
     where
         I: ExactSizeIterator<Item = &'a Self>,
@@ -151,15 +264,15 @@ impl<S: Size, V: VectorSymbolicArchitecture> EvaluateOps for Vector<S, V> {
             return first.clone();
         }
 
-        let storage = first
-            .vsa
-            .bundle_multi(std::iter::once(&first.data).chain(values.map(|value| &value.data)))
-            .expect("plus has at least two compatible terms");
+        let mut result = V::denormalize(first.data.0.clone());
+        for value in values {
+            first.vsa.bundle(&mut result, &value.data.0);
+        }
 
         Self {
             size: first.size,
             vsa: first.vsa.clone(),
-            data: first.vsa.normalize(storage),
+            data: Normalized(first.vsa.normalize(result)),
         }
     }
 
@@ -168,7 +281,7 @@ impl<S: Size, V: VectorSymbolicArchitecture> EvaluateOps for Vector<S, V> {
     }
 }
 
-impl<S: Size, V: VectorSymbolicArchitecture> std::fmt::Debug for Vector<S, V> {
+impl<S: Size, V: VectorSymbolicArchitecture, T: VectorType<V>> std::fmt::Debug for Vector<S, V, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Vector")
             .field("size", &self.size)
@@ -176,66 +289,197 @@ impl<S: Size, V: VectorSymbolicArchitecture> std::fmt::Debug for Vector<S, V> {
     }
 }
 
-impl<S: Size, V: VectorSymbolicArchitecture> PartialEq for Vector<S, V> {
+impl<S: Size, V: VectorSymbolicArchitecture, T: VectorType<V>> PartialEq for Vector<S, V, T> {
     fn eq(&self, other: &Self) -> bool {
         self.size == other.size && self.data == other.data
     }
 }
 
-impl<S: Size, V: VectorSymbolicArchitecture> Eq for Vector<S, V> where V::Storage: Eq {}
+impl<S: Size, V: VectorSymbolicArchitecture> Eq for Vector<S, V, Normalized<V>> where V::Storage: Eq {}
+impl<S: Size, V: VectorSymbolicArchitecture> Eq for Vector<S, V, NotNormalized<V>> where
+    V::Accumulator: Eq
+{
+}
 
-impl<S: Size, V: VectorSymbolicArchitecture> Add<Self> for Vector<S, V> {
-    type Output = Self;
+impl<S: Size, V: VectorSymbolicArchitecture> Add<Self> for Vector<S, V, Normalized<V>> {
+    type Output = Vector<S, V, NotNormalized<V>>;
 
     fn add(self, rhs: Self) -> Self::Output {
         assert_eq!(
             self.size, rhs.size,
             "cannot bundle vectors of different sizes"
         );
-        let data = self.vsa.bundle(&self.data, &rhs.data);
-        Self {
+
+        let mut data = V::denormalize(self.data.0);
+        self.vsa.bundle(&mut data, &rhs.data.0);
+        Vector {
             size: self.size,
             vsa: self.vsa,
-            data,
+            data: NotNormalized(data),
         }
     }
 }
 
-impl<'a, S: Size, V: VectorSymbolicArchitecture> Add<&'a Self> for Vector<S, V> {
-    type Output = Self;
+impl<'a, S: Size, V: VectorSymbolicArchitecture> Add<&'a Self> for Vector<S, V, Normalized<V>> {
+    type Output = Vector<S, V, NotNormalized<V>>;
 
     fn add(self, rhs: &'a Self) -> Self::Output {
         assert_eq!(
             self.size, rhs.size,
             "cannot bundle vectors of different sizes"
         );
-        let data = self.vsa.bundle(&self.data, &rhs.data);
-        Self {
+        let mut data = V::denormalize(self.data.0);
+        self.vsa.bundle(&mut data, &rhs.data.0);
+        Vector {
             size: self.size,
             vsa: self.vsa,
-            data,
+            data: NotNormalized(data),
         }
     }
 }
 
-impl<'a, S: Size, V: VectorSymbolicArchitecture> Add<&'a Vector<S, V>> for &Vector<S, V> {
-    type Output = Vector<S, V>;
+impl<'a, S: Size, V: VectorSymbolicArchitecture> Add<&'a Vector<S, V, Normalized<V>>>
+    for &Vector<S, V, Normalized<V>>
+{
+    type Output = Vector<S, V, NotNormalized<V>>;
 
-    fn add(self, rhs: &'a Vector<S, V>) -> Self::Output {
+    fn add(self, rhs: &'a Vector<S, V, Normalized<V>>) -> Self::Output {
         assert_eq!(
             self.size, rhs.size,
             "cannot bundle vectors of different sizes"
         );
-        let data = self.vsa.bundle(&self.data, &rhs.data);
+        let mut data = V::denormalize(self.data.0.clone());
+        self.vsa.bundle(&mut data, &rhs.data.0);
         Vector {
             size: self.size,
             vsa: self.vsa.clone(),
-            data,
+            data: NotNormalized(data),
         }
     }
 }
 
-impl<S: Size, V: VectorSymbolicArchitecture> Mul<Self> for Vector<S, V> {
+impl<S: Size, V: VectorSymbolicArchitecture> Add<Vector<S, V, NotNormalized<V>>>
+    for Vector<S, V, Normalized<V>>
+{
+    type Output = Vector<S, V, NotNormalized<V>>;
+
+    fn add(self, rhs: Vector<S, V, NotNormalized<V>>) -> Self::Output {
+        assert_eq!(
+            self.size, rhs.size,
+            "cannot bundle vectors of different sizes"
+        );
+        let mut data = rhs.data.0;
+        self.vsa.bundle(&mut data, &self.data.0);
+        Vector {
+            size: self.size,
+            vsa: self.vsa,
+            data: NotNormalized(data),
+        }
+    }
+}
+
+impl<'a, S: Size, V: VectorSymbolicArchitecture> Add<&'a Vector<S, V, NotNormalized<V>>>
+    for Vector<S, V, Normalized<V>>
+{
+    type Output = Vector<S, V, NotNormalized<V>>;
+
+    fn add(self, rhs: &'a Vector<S, V, NotNormalized<V>>) -> Self::Output {
+        assert_eq!(
+            self.size, rhs.size,
+            "cannot bundle vectors of different sizes"
+        );
+        let mut data = rhs.data.0.clone();
+        self.vsa.bundle(&mut data, &self.data.0);
+
+        Vector {
+            size: self.size,
+            vsa: self.vsa,
+            data: NotNormalized(data),
+        }
+    }
+}
+
+impl<'a, S: Size, V: VectorSymbolicArchitecture> Add<&'a Vector<S, V, NotNormalized<V>>>
+    for &Vector<S, V, Normalized<V>>
+{
+    type Output = Vector<S, V, NotNormalized<V>>;
+
+    fn add(self, rhs: &'a Vector<S, V, NotNormalized<V>>) -> Self::Output {
+        assert_eq!(
+            self.size, rhs.size,
+            "cannot bundle vectors of different sizes"
+        );
+        let mut data = rhs.data.0.clone();
+        self.vsa.bundle(&mut data, &self.data.0);
+        Vector {
+            size: self.size,
+            vsa: self.vsa.clone(),
+            data: NotNormalized(data),
+        }
+    }
+}
+
+impl<S: Size, V: VectorSymbolicArchitecture> Add<Vector<S, V, Normalized<V>>>
+    for Vector<S, V, NotNormalized<V>>
+{
+    type Output = Vector<S, V, NotNormalized<V>>;
+
+    fn add(self, rhs: Vector<S, V, Normalized<V>>) -> Self::Output {
+        assert_eq!(
+            self.size, rhs.size,
+            "cannot bundle vectors of different sizes"
+        );
+        let mut data = self.data.0;
+        self.vsa.bundle(&mut data, &rhs.data.0);
+        Vector {
+            size: self.size,
+            vsa: self.vsa,
+            data: NotNormalized(data),
+        }
+    }
+}
+
+impl<'a, S: Size, V: VectorSymbolicArchitecture> Add<&'a Vector<S, V, Normalized<V>>>
+    for Vector<S, V, NotNormalized<V>>
+{
+    type Output = Vector<S, V, NotNormalized<V>>;
+
+    fn add(self, rhs: &'a Vector<S, V, Normalized<V>>) -> Self::Output {
+        assert_eq!(
+            self.size, rhs.size,
+            "cannot bundle vectors of different sizes"
+        );
+        let mut data = self.data.0;
+        self.vsa.bundle(&mut data, &rhs.data.0);
+        Vector {
+            size: self.size,
+            vsa: self.vsa,
+            data: NotNormalized(data),
+        }
+    }
+}
+
+impl<'a, S: Size, V: VectorSymbolicArchitecture> Add<&'a Vector<S, V, Normalized<V>>>
+    for &Vector<S, V, NotNormalized<V>>
+{
+    type Output = Vector<S, V, NotNormalized<V>>;
+
+    fn add(self, rhs: &'a Vector<S, V, Normalized<V>>) -> Self::Output {
+        assert_eq!(
+            self.size, rhs.size,
+            "cannot bundle vectors of different sizes"
+        );
+        let mut data = self.data.0.clone();
+        self.vsa.bundle(&mut data, &rhs.data.0);
+        Vector {
+            size: self.size,
+            vsa: self.vsa.clone(),
+            data: NotNormalized(data),
+        }
+    }
+}
+
+impl<S: Size, V: VectorSymbolicArchitecture> Mul<Self> for Vector<S, V, Normalized<V>> {
     type Output = Self;
 
     fn mul(self, rhs: Self) -> Self::Output {
@@ -243,16 +487,16 @@ impl<S: Size, V: VectorSymbolicArchitecture> Mul<Self> for Vector<S, V> {
             self.size, rhs.size,
             "cannot bind vectors of different sizes"
         );
-        let data = V::bind(&self.data, &rhs.data);
+        let data = V::bind(&self.data.0, &rhs.data.0);
         Self {
             size: self.size,
             vsa: self.vsa,
-            data,
+            data: Normalized(data),
         }
     }
 }
 
-impl<'a, S: Size, V: VectorSymbolicArchitecture> Mul<&'a Self> for Vector<S, V> {
+impl<'a, S: Size, V: VectorSymbolicArchitecture> Mul<&'a Self> for Vector<S, V, Normalized<V>> {
     type Output = Self;
 
     fn mul(self, rhs: &'a Self) -> Self::Output {
@@ -260,66 +504,71 @@ impl<'a, S: Size, V: VectorSymbolicArchitecture> Mul<&'a Self> for Vector<S, V> 
             self.size, rhs.size,
             "cannot bind vectors of different sizes"
         );
-        let data = V::bind(&self.data, &rhs.data);
+        let data = V::bind(&self.data.0, &rhs.data.0);
         Self {
             size: self.size,
             vsa: self.vsa,
-            data,
+            data: Normalized(data),
         }
     }
 }
 
-impl<'a, S: Size, V: VectorSymbolicArchitecture> Mul<&'a Vector<S, V>> for &Vector<S, V> {
-    type Output = Vector<S, V>;
+impl<'a, S: Size, V: VectorSymbolicArchitecture> Mul<&'a Vector<S, V, Normalized<V>>>
+    for &Vector<S, V, Normalized<V>>
+{
+    type Output = Vector<S, V, Normalized<V>>;
 
-    fn mul(self, rhs: &'a Vector<S, V>) -> Self::Output {
+    fn mul(self, rhs: &'a Vector<S, V, Normalized<V>>) -> Self::Output {
         assert_eq!(
             self.size, rhs.size,
             "cannot bind vectors of different sizes"
         );
-        let data = V::bind(&self.data, &rhs.data);
+        let data = V::bind(&self.data.0, &rhs.data.0);
         Vector {
             size: self.size,
             vsa: self.vsa.clone(),
-            data,
+            data: Normalized(data),
         }
     }
 }
 
-impl<S: Size, V: NonSelfInverseVectorSymbolicArchitecture> std::ops::Neg for Vector<S, V> {
+impl<S: Size, V: NonSelfInverseVectorSymbolicArchitecture> std::ops::Neg
+    for Vector<S, V, Normalized<V>>
+{
     type Output = Self;
 
-    fn neg(self) -> Self::Output {
-        let data = V::inverse(&self.data);
-        Self {
-            size: self.size,
-            vsa: self.vsa,
-            data,
-        }
+    fn neg(mut self) -> Self::Output {
+        V::inverse(&mut self.data.0);
+        self
     }
 }
 
-impl<S: Size, V: NonSelfInverseVectorSymbolicArchitecture> std::ops::Neg for &Vector<S, V> {
-    type Output = Vector<S, V>;
+impl<S: Size, V: NonSelfInverseVectorSymbolicArchitecture> std::ops::Neg
+    for &Vector<S, V, Normalized<V>>
+{
+    type Output = Vector<S, V, Normalized<V>>;
 
     fn neg(self) -> Self::Output {
-        let data = V::inverse(&self.data);
+        let mut data = self.data.0.clone();
+        V::inverse(&mut data);
         Vector {
             size: self.size,
             vsa: self.vsa.clone(),
-            data,
+            data: Normalized(data),
         }
     }
 }
 
 #[derive(Debug)]
-pub struct VectorIterator<'a, S: Size, V: VectorSymbolicArchitecture> {
-    vector: &'a Vector<S, V>,
+pub struct VectorIterator<'a, S: Size, V: VectorSymbolicArchitecture, T: VectorType<V>> {
+    vector: &'a Vector<S, V, T>,
     index: usize,
 }
 
-impl<'a, S: Size, V: VectorSymbolicArchitecture> Iterator for VectorIterator<'a, S, V> {
-    type Item = <<V as VectorSymbolicArchitecture>::Storage as Storage>::Primitive;
+impl<'a, S: Size, V: VectorSymbolicArchitecture, T: VectorType<V>> Iterator
+    for VectorIterator<'a, S, V, T>
+{
+    type Item = T::Primitive;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.index >= self.vector.size.size() {
@@ -336,11 +585,16 @@ impl<'a, S: Size, V: VectorSymbolicArchitecture> Iterator for VectorIterator<'a,
     }
 }
 
-impl<'a, S: Size, V: VectorSymbolicArchitecture> ExactSizeIterator for VectorIterator<'a, S, V> {}
+impl<'a, S: Size, V: VectorSymbolicArchitecture, T: VectorType<V>> ExactSizeIterator
+    for VectorIterator<'a, S, V, T>
+{
+}
 
-impl<'a, S: Size, V: VectorSymbolicArchitecture> IntoIterator for &'a Vector<S, V> {
-    type Item = <<V as VectorSymbolicArchitecture>::Storage as Storage>::Primitive;
-    type IntoIter = VectorIterator<'a, S, V>;
+impl<'a, S: Size, V: VectorSymbolicArchitecture, T: VectorType<V>> IntoIterator
+    for &'a Vector<S, V, T>
+{
+    type Item = T::Primitive;
+    type IntoIter = VectorIterator<'a, S, V, T>;
 
     fn into_iter(self) -> Self::IntoIter {
         VectorIterator {

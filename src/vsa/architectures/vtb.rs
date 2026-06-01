@@ -1,4 +1,4 @@
-use std::{borrow::Borrow, sync::Arc};
+use std::sync::Arc;
 
 use num_traits::ToPrimitive;
 use rand::{RngExt, SeedableRng};
@@ -64,7 +64,7 @@ impl<R: FloatResolution, Rng: rand::Rng> VectorSymbolicArchitecture
     for VectorDerivedTransformationBinding<R, Rng>
 {
     type Storage = Vec<R>;
-    type StorageMulti = Vec<R>;
+    type Accumulator = Vec<R>;
 
     fn valid_size<S: crate::Size>(size: S) -> bool {
         // VTB requires perfect-square dimensionality.
@@ -89,7 +89,7 @@ impl<R: FloatResolution, Rng: rand::Rng> VectorSymbolicArchitecture
         out
     }
 
-    fn normalize(&self, storage: Self::StorageMulti) -> Self::Storage {
+    fn normalize(&self, storage: Self::Accumulator) -> Self::Storage {
         let norm = Self::norm(&storage);
         if norm == R::ZERO {
             return storage;
@@ -98,33 +98,30 @@ impl<R: FloatResolution, Rng: rand::Rng> VectorSymbolicArchitecture
         storage.into_iter().map(|value| value / norm).collect()
     }
 
-    fn bundle(&self, a: &Self::Storage, b: &Self::Storage) -> Self::Storage {
-        self.bundle_multi([a, b].into_iter()).expect("two vectors")
+    fn denormalize(storage: Self::Storage) -> Self::Accumulator {
+        storage
     }
 
-    fn bundle_multi<I>(&self, mut vectors: impl Iterator<Item = I>) -> Option<Self::StorageMulti>
-    where
-        I: Borrow<Self::Storage>,
-    {
-        let first_borrowed = vectors.next()?;
-        let first = first_borrowed.borrow();
-        let mut out = first.clone();
-        let mut total = 1usize;
+    fn bundle(&self, accumulator: &mut Self::Accumulator, vector: &Self::Storage) {
+        accumulator
+            .iter_mut()
+            .zip(vector.iter())
+            .for_each(|(acc, value)| {
+                *acc += *value;
+            })
+    }
 
-        for vector_borrowed in vectors {
-            let vector = vector_borrowed.borrow();
-            first.enforce_constraints(vector);
-            total += 1;
-            for (sum, value) in out.iter_mut().zip(vector.iter()) {
-                *sum += *value;
-            }
-        }
-
-        if total < 2 {
-            return None;
-        }
-
-        Some(out)
+    fn bundle_with_accumulator(
+        &self,
+        accumulator: &mut Self::Accumulator,
+        vector: &Self::Accumulator,
+    ) {
+        accumulator
+            .iter_mut()
+            .zip(vector.iter())
+            .for_each(|(acc, value)| {
+                *acc += *value;
+            })
     }
 
     fn bind(a: &Self::Storage, b: &Self::Storage) -> Self::Storage {
@@ -151,20 +148,18 @@ impl<R: FloatResolution, Rng: rand::Rng> VectorSymbolicArchitecture
         out
     }
 
-    fn permute(a: &Self::Storage, shifts: usize) -> Self::Storage {
+    fn permute(a: &mut Self::Storage, shifts: usize) {
         let len = a.len();
         if len == 0 {
-            return a.clone();
+            return;
         }
 
         let shift = shifts % len;
         if shift == 0 {
-            return a.clone();
+            return;
         }
 
-        let mut out = a.clone();
-        out.rotate_right(shift);
-        out
+        a.rotate_right(shift);
     }
 
     fn similarity(a: &Self::Storage, b: &Self::Storage) -> f64 {
@@ -183,17 +178,13 @@ impl<R: FloatResolution, Rng: rand::Rng> VectorSymbolicArchitecture
 impl<R: FloatResolution, Rng: rand::Rng> NonSelfInverseVectorSymbolicArchitecture
     for VectorDerivedTransformationBinding<R, Rng>
 {
-    fn inverse(a: &Self::Storage) -> Self::Storage {
+    fn inverse(a: &mut Self::Storage) {
         let sqrt_d = Self::sqrt_dimension(a.len());
-        let mut out = vec![R::ZERO; a.len()];
-
         for row in 0..sqrt_d {
-            for col in 0..sqrt_d {
-                out[row * sqrt_d + col] = a[col * sqrt_d + row];
+            for col in (row + 1)..sqrt_d {
+                a.swap(row * sqrt_d + col, col * sqrt_d + row);
             }
         }
-
-        out
     }
 }
 
@@ -234,9 +225,9 @@ mod tests {
 
     #[test]
     fn inverse_transposes_square_view() {
-        let a = vec![0.2, -0.1, 0.3, 0.4, -0.5, 0.6, -0.7, 0.8, -0.9];
-        let inv = VectorDerivedTransformationBinding::<f64, rand::rngs::StdRng>::inverse(&a);
-        assert_eq!(inv, vec![0.2, 0.4, -0.7, -0.1, -0.5, 0.8, 0.3, 0.6, -0.9]);
+        let mut a = vec![0.2, -0.1, 0.3, 0.4, -0.5, 0.6, -0.7, 0.8, -0.9];
+        VectorDerivedTransformationBinding::<f64, rand::rngs::StdRng>::inverse(&mut a);
+        assert_eq!(a, vec![0.2, 0.4, -0.7, -0.1, -0.5, 0.8, 0.3, 0.6, -0.9]);
     }
 
     #[test]

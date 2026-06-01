@@ -1,4 +1,4 @@
-use std::{borrow::Borrow, sync::Arc};
+use std::sync::Arc;
 
 use bitvec::prelude::*;
 use rand::SeedableRng;
@@ -46,18 +46,18 @@ where
     Rng: rand::Rng,
 {
     type Storage = BitVec<R, Lsb0>;
-    type StorageMulti = BitVec<R, Lsb0>;
+    type Accumulator = BitVec<R, Lsb0>;
 
     fn random(&self, size: usize) -> Self::Storage {
         BitVec::random(&mut self.rng.write(), size)
     }
 
-    fn normalize(&self, storage: Self::StorageMulti) -> Self::Storage {
+    fn denormalize(storage: Self::Storage) -> Self::Accumulator {
         storage
     }
 
-    fn bundle(&self, a: &Self::Storage, b: &Self::Storage) -> Self::Storage {
-        self.bundle_multi([a, b].into_iter()).expect("two vectors")
+    fn normalize(&self, storage: Self::Accumulator) -> Self::Storage {
+        storage
     }
 
     fn bind(a: &Self::Storage, b: &Self::Storage) -> Self::Storage {
@@ -68,63 +68,48 @@ where
         out
     }
 
-    fn bundle_multi<I>(&self, mut vectors: impl Iterator<Item = I>) -> Option<Self::StorageMulti>
-    where
-        I: Borrow<Self::Storage>,
-    {
-        let first_borrowed = vectors.next()?;
-        let first = first_borrowed.borrow();
-        let len = first.len();
-        let mut ones = vec![0; len];
-        let mut total = 1usize;
-
-        for (idx, bit) in first.iter().by_vals().enumerate() {
-            ones[idx] += usize::from(bit);
-        }
-
-        for vector_borrowed in vectors {
-            let vector = vector_borrowed.borrow();
-            first.enforce_constraints(vector);
-            total += 1;
-            for (idx, bit) in vector.iter().by_vals().enumerate() {
-                ones[idx] += usize::from(bit);
+    fn bundle(&self, accumulator: &mut Self::Accumulator, vector: &Self::Storage) {
+        let tiebreaker = BitVec::<R, Lsb0>::random(&mut self.rng.write(), vector.len());
+        for ((mut acc_bit, vec_bit), tie_bit) in accumulator
+            .iter_mut()
+            .zip(vector.iter())
+            .zip(tiebreaker.iter())
+        {
+            if *acc_bit != *vec_bit {
+                *acc_bit = *tie_bit;
             }
         }
-
-        if total < 2 {
-            return None;
-        }
-
-        let half = total / 2;
-        let tiebreaker = BitVec::<R, Lsb0>::random(&mut self.rng.write(), len);
-        let mut out = BitVec::with_capacity(len);
-        for (idx, count) in ones.into_iter().enumerate() {
-            if count > half {
-                out.push(true);
-            } else if count < half || total % 2 == 1 {
-                out.push(false);
-            } else {
-                out.push(tiebreaker[idx]);
-            }
-        }
-
-        Some(out)
     }
 
-    fn permute(a: &Self::Storage, shifts: usize) -> Self::Storage {
+    fn bundle_with_accumulator(
+        &self,
+        accumulator: &mut Self::Accumulator,
+        vector: &Self::Accumulator,
+    ) {
+        let tiebreaker = BitVec::<R, Lsb0>::random(&mut self.rng.write(), vector.len());
+        for ((mut acc_bit, vec_bit), tie_bit) in accumulator
+            .iter_mut()
+            .zip(vector.iter())
+            .zip(tiebreaker.iter())
+        {
+            if *acc_bit != *vec_bit {
+                *acc_bit = *tie_bit;
+            }
+        }
+    }
+
+    fn permute(a: &mut Self::Storage, shifts: usize) {
         let len = a.len();
         if len == 0 {
-            return a.clone();
+            return;
         }
 
         let shift = shifts % len;
         if shift == 0 {
-            return a.clone();
+            return;
         }
 
-        let mut out = a.clone();
-        out.rotate_right(shift);
-        out
+        a.rotate_right(shift);
     }
 
     fn similarity(a: &Self::Storage, b: &Self::Storage) -> f64 {
@@ -174,7 +159,8 @@ mod tests {
         let a: BitVec<u8, Lsb0> = bitvec![u8, Lsb0; 1, 0, 1, 0, 1, 0];
         let b: BitVec<u8, Lsb0> = bitvec![u8, Lsb0; 1, 1, 0, 0, 0, 0];
 
-        let bundled = bsc.bundle(&a, &b);
+        let mut bundled = a.clone();
+        bsc.bundle(&mut bundled, &b);
         let random_bits = random_source.random(6);
         let expected: BitVec<u8, Lsb0> = a
             .iter()
@@ -192,10 +178,10 @@ mod tests {
 
     #[test]
     fn permutation_rolls_right() {
-        let a: BitVec<u8, Lsb0> = bitvec![u8, Lsb0; 1, 0, 1, 0, 1];
-        let permuted = BinarySpatterCode::<u8>::permute(&a, 2);
+        let mut a: BitVec<u8, Lsb0> = bitvec![u8, Lsb0; 1, 0, 1, 0, 1];
+        BinarySpatterCode::<u8>::permute(&mut a, 2);
 
-        assert_eq!(permuted, bitvec![u8, Lsb0; 0, 1, 1, 0, 1]);
+        assert_eq!(a, bitvec![u8, Lsb0; 0, 1, 1, 0, 1]);
     }
 
     #[test]

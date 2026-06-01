@@ -1,7 +1,7 @@
 use std::num::NonZero;
 
 use ::symbolar::{
-    Dynamic, Expression, Size, Storage, Subset, Vector,
+    Dynamic, Expression, Normalized, NotNormalized, Size, Storage, Subset, Vector,
     architectures::{
         BinarySpatterCode, HolographicReducedRepresentation, MultiplyAddPermute,
         VectorDerivedTransformationBinding,
@@ -130,6 +130,9 @@ macro_rules! define_architecture_bindings {
         vector_py = $vector_py:ident,
         vector_name = $vector_name:literal,
         vector_inner = $vector_inner:ty,
+        vector_unnormalized_py = $vector_unnormalized_py:ident,
+        vector_unnormalized_name = $vector_unnormalized_name:literal,
+        vector_unnormalized_inner = $vector_unnormalized_inner:ty,
         inverse_methods = { $($inverse_methods:tt)* },
         storage_py = $storage_py:ident,
         storage_name = $storage_name:literal,
@@ -204,7 +207,15 @@ macro_rules! define_architecture_bindings {
             }
 
             fn bundle(&self, py: Python<'_>, other: &$vector_py) -> PyResult<Py<$vector_py>> {
-                $vector_py::from_inner(py, &self.inner + &other.inner)
+                $vector_py::from_inner(py, (&self.inner + &other.inner).normalize())
+            }
+
+            fn bundle_unnormalized(
+                &self,
+                py: Python<'_>,
+                other: &$vector_py,
+            ) -> PyResult<Py<$vector_unnormalized_py>> {
+                $vector_unnormalized_py::from_inner(py, &self.inner + &other.inner)
             }
 
             fn equals(&self, other: &$vector_py) -> bool {
@@ -223,6 +234,37 @@ macro_rules! define_architecture_bindings {
 
             fn __repr__(&self) -> String {
                 format!("{}(size={})", $vector_name, self.inner.size.size())
+            }
+        }
+
+        #[pyclass(name = $vector_unnormalized_name, extends = PyVector)]
+        #[derive(Clone, Debug)]
+        struct $vector_unnormalized_py {
+            inner: $vector_unnormalized_inner,
+        }
+
+        impl $vector_unnormalized_py {
+            fn from_inner(py: Python<'_>, inner: $vector_unnormalized_inner) -> PyResult<Py<Self>> {
+                let size = inner.size.size();
+                Py::new(
+                    py,
+                    (Self { inner }, PyVector::new($architecture_name, size)),
+                )
+            }
+        }
+
+        #[pymethods]
+        impl $vector_unnormalized_py {
+            fn normalize(&self, py: Python<'_>) -> PyResult<Py<$vector_py>> {
+                $vector_py::from_inner(py, self.inner.clone().normalize())
+            }
+
+            fn equals(&self, other: &$vector_unnormalized_py) -> bool {
+                self.inner == other.inner
+            }
+
+            fn __repr__(&self) -> String {
+                format!("{}(size={})", $vector_unnormalized_name, self.inner.size.size())
             }
         }
 
@@ -393,8 +435,22 @@ macro_rules! define_architecture_bindings {
 
             fn bundle_dataset(&self, py: Python<'_>) -> PyResult<Option<Py<$vector_py>>> {
                 let subset = self.build_subset()?;
-                match subset.bundle_dataset() {
+                match subset.bundle_dataset::<
+                    Normalized<$architecture_inner>,
+                    Normalized<$architecture_inner>,
+                >() {
                     Some(inner) => Ok(Some($vector_py::from_inner(py, inner)?)),
+                    None => Ok(None),
+                }
+            }
+
+            fn bundle_dataset_unnormalized(&self, py: Python<'_>) -> PyResult<Option<Py<$vector_unnormalized_py>>> {
+                let subset = self.build_subset()?;
+                match subset.bundle_dataset::<
+                    NotNormalized<$architecture_inner>,
+                    NotNormalized<$architecture_inner>,
+                >() {
+                    Some(inner) => Ok(Some($vector_unnormalized_py::from_inner(py, inner)?)),
                     None => Ok(None),
                 }
             }
@@ -414,10 +470,14 @@ type BscArchitecture = BinarySpatterCode<usize>;
 type HrrArchitecture = HolographicReducedRepresentation<f64, rand::rngs::StdRng>;
 type MapArchitecture = MultiplyAddPermute<usize>;
 type VtbArchitecture = VectorDerivedTransformationBinding<f64, rand::rngs::StdRng>;
-type BscVector = Vector<Dynamic, BscArchitecture>;
-type HrrVector = Vector<Dynamic, HrrArchitecture>;
-type MapVector = Vector<Dynamic, MapArchitecture>;
-type VtbVector = Vector<Dynamic, VtbArchitecture>;
+type BscVector = Vector<Dynamic, BscArchitecture, Normalized<BscArchitecture>>;
+type HrrVector = Vector<Dynamic, HrrArchitecture, Normalized<HrrArchitecture>>;
+type MapVector = Vector<Dynamic, MapArchitecture, Normalized<MapArchitecture>>;
+type VtbVector = Vector<Dynamic, VtbArchitecture, Normalized<VtbArchitecture>>;
+type BscUnnormalizedVector = Vector<Dynamic, BscArchitecture, NotNormalized<BscArchitecture>>;
+type HrrUnnormalizedVector = Vector<Dynamic, HrrArchitecture, NotNormalized<HrrArchitecture>>;
+type MapUnnormalizedVector = Vector<Dynamic, MapArchitecture, NotNormalized<MapArchitecture>>;
+type VtbUnnormalizedVector = Vector<Dynamic, VtbArchitecture, NotNormalized<VtbArchitecture>>;
 type BscStorage = Storage<Dynamic, BscArchitecture>;
 type HrrStorage = Storage<Dynamic, HrrArchitecture>;
 type MapStorage = Storage<Dynamic, MapArchitecture>;
@@ -430,6 +490,9 @@ define_architecture_bindings!(
     vector_py = PyBscVector,
     vector_name = "BscVector",
     vector_inner = BscVector,
+    vector_unnormalized_py = PyBscUnnormalizedVector,
+    vector_unnormalized_name = "BscUnnormalizedVector",
+    vector_unnormalized_inner = BscUnnormalizedVector,
     inverse_methods = {},
     storage_py = PyBscStorage,
     storage_name = "BscStorage",
@@ -445,6 +508,9 @@ define_architecture_bindings!(
     vector_py = PyMapVector,
     vector_name = "MapVector",
     vector_inner = MapVector,
+    vector_unnormalized_py = PyMapUnnormalizedVector,
+    vector_unnormalized_name = "MapUnnormalizedVector",
+    vector_unnormalized_inner = MapUnnormalizedVector,
     inverse_methods = {},
     storage_py = PyMapStorage,
     storage_name = "MapStorage",
@@ -460,6 +526,9 @@ define_architecture_bindings!(
     vector_py = PyHrrVector,
     vector_name = "HrrVector",
     vector_inner = HrrVector,
+    vector_unnormalized_py = PyHrrUnnormalizedVector,
+    vector_unnormalized_name = "HrrUnnormalizedVector",
+    vector_unnormalized_inner = HrrUnnormalizedVector,
     inverse_methods = {
         fn inverse(&self, py: Python<'_>) -> PyResult<Py<PyHrrVector>> {
             PyHrrVector::from_inner(py, -&self.inner)
@@ -483,6 +552,9 @@ define_architecture_bindings!(
     vector_py = PyVtbVector,
     vector_name = "VtbVector",
     vector_inner = VtbVector,
+    vector_unnormalized_py = PyVtbUnnormalizedVector,
+    vector_unnormalized_name = "VtbUnnormalizedVector",
+    vector_unnormalized_inner = VtbUnnormalizedVector,
     inverse_methods = {
         fn inverse(&self, py: Python<'_>) -> PyResult<Py<PyVtbVector>> {
             PyVtbVector::from_inner(py, -&self.inner)
@@ -514,6 +586,10 @@ fn symbolar(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyMapVector>()?;
     module.add_class::<PyHrrVector>()?;
     module.add_class::<PyVtbVector>()?;
+    module.add_class::<PyBscUnnormalizedVector>()?;
+    module.add_class::<PyMapUnnormalizedVector>()?;
+    module.add_class::<PyHrrUnnormalizedVector>()?;
+    module.add_class::<PyVtbUnnormalizedVector>()?;
 
     module.add_class::<PyBscStorage>()?;
     module.add_class::<PyMapStorage>()?;
