@@ -60,12 +60,9 @@ where
         storage
     }
 
-    fn bind(a: &Self::Storage, b: &Self::Storage) -> Self::Storage {
+    fn bind(a: &mut Self::Storage, b: &Self::Storage) {
         a.enforce_constraints(b);
-
-        let mut out = a.clone();
-        out ^= b.as_bitslice();
-        out
+        *a ^= b.as_bitslice();
     }
 
     fn bundle(&self, accumulator: &mut Self::Accumulator, vector: &Self::Storage) {
@@ -96,6 +93,11 @@ where
                 *acc_bit = *tie_bit;
             }
         }
+    }
+
+    fn bind_with_accumulator(a: &mut Self::Accumulator, b: &Self::Storage) {
+        a.enforce_constraints(b);
+        *a ^= b.as_bitslice();
     }
 
     fn permute(a: &mut Self::Storage, shifts: usize) {
@@ -147,7 +149,8 @@ mod tests {
     fn bind_behaves_like_xor() {
         let a: BitVec<u8, Lsb0> = bitvec![u8, Lsb0; 1, 0, 1, 0];
         let b: BitVec<u8, Lsb0> = bitvec![u8, Lsb0; 1, 1, 0, 0];
-        let bound = BinarySpatterCode::<u8>::bind(&a, &b);
+        let mut bound = a.clone();
+        BinarySpatterCode::<u8>::bind(&mut bound, &b);
 
         assert_eq!(bound, bitvec![u8, Lsb0; 0, 1, 1, 0]);
     }

@@ -49,6 +49,30 @@ impl<R: FloatResolution, Rng: rand::Rng> VectorDerivedTransformationBinding<R, R
         values.iter().map(|v| v.powi(2)).sum::<R>().sqrt()
     }
 
+    fn bind_values(a: &Vec<R>, b: &Vec<R>) -> Vec<R> {
+        a.enforce_constraints(b);
+
+        let sqrt_d = Self::sqrt_dimension(a.len());
+        let scale = R::from(sqrt_d.to_f64().unwrap().sqrt()).unwrap();
+        let mut out = vec![R::ZERO; a.len()];
+
+        for block in 0..sqrt_d {
+            let block_start = block * sqrt_d;
+            let x_block = &a[block_start..block_start + sqrt_d];
+            let out_block = &mut out[block_start..block_start + sqrt_d];
+
+            for row in 0..sqrt_d {
+                let mut sum = R::ZERO;
+                for col in 0..sqrt_d {
+                    sum += b[row * sqrt_d + col] * x_block[col];
+                }
+                out_block[row] = scale * sum;
+            }
+        }
+
+        out
+    }
+
     fn sqrt_dimension(len: usize) -> usize {
         let sqrt_d = (len as f64).sqrt() as usize;
         assert_eq!(
@@ -124,28 +148,12 @@ impl<R: FloatResolution, Rng: rand::Rng> VectorSymbolicArchitecture
             })
     }
 
-    fn bind(a: &Self::Storage, b: &Self::Storage) -> Self::Storage {
-        a.enforce_constraints(b);
+    fn bind(a: &mut Self::Storage, b: &Self::Storage) {
+        *a = Self::bind_values(a, b);
+    }
 
-        let sqrt_d = Self::sqrt_dimension(a.len());
-        let scale = R::from(sqrt_d.to_f64().unwrap().sqrt()).unwrap();
-        let mut out = vec![R::ZERO; a.len()];
-
-        for block in 0..sqrt_d {
-            let block_start = block * sqrt_d;
-            let x_block = &a[block_start..block_start + sqrt_d];
-            let out_block = &mut out[block_start..block_start + sqrt_d];
-
-            for row in 0..sqrt_d {
-                let mut sum = R::ZERO;
-                for col in 0..sqrt_d {
-                    sum += b[row * sqrt_d + col] * x_block[col];
-                }
-                out_block[row] = scale * sum;
-            }
-        }
-
-        out
+    fn bind_with_accumulator(a: &mut Self::Accumulator, b: &Self::Storage) {
+        *a = Self::bind_values(a, b);
     }
 
     fn permute(a: &mut Self::Storage, shifts: usize) {
@@ -205,7 +213,8 @@ mod tests {
         let a = vec![0.2, -0.1, 0.3, 0.4, -0.5, 0.6, -0.7, 0.8, -0.9];
         let b = vec![-0.3, 0.5, -0.2, 0.7, -0.6, 0.1, 0.4, -0.8, 0.9];
 
-        let bound = VectorDerivedTransformationBinding::<f64, rand::rngs::StdRng>::bind(&a, &b);
+        let mut bound = a.clone();
+        VectorDerivedTransformationBinding::<f64, rand::rngs::StdRng>::bind(&mut bound, &b);
         let expected = vec![
             -0.29444863728670917,
             0.3983716857408417,
@@ -267,6 +276,7 @@ mod tests {
     fn non_square_dimension_panics() {
         let a = vec![0.1, 0.2, 0.3, 0.4, 0.5];
         let b = vec![0.5, 0.4, 0.3, 0.2, 0.1];
-        let _ = VectorDerivedTransformationBinding::<f64, rand::rngs::StdRng>::bind(&a, &b);
+        let mut a = a;
+        VectorDerivedTransformationBinding::<f64, rand::rngs::StdRng>::bind(&mut a, &b);
     }
 }

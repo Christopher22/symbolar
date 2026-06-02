@@ -219,6 +219,24 @@ impl<S: Size, V: VectorSymbolicArchitecture> Vector<S, V, NotNormalized<V>> {
             data: Normalized(normalized),
         }
     }
+
+    /// Bind the accumulator with a normalized vector.
+    /// You should prefer the Mul operator instead.
+    pub fn bind(self, other: &Vector<S, V, Normalized<V>>) -> Self {
+        assert_eq!(
+            self.size, other.size,
+            "cannot bind vectors of different sizes"
+        );
+
+        let mut data = self.data.0;
+        V::bind_with_accumulator(&mut data, &other.data.0);
+
+        Vector {
+            size: self.size,
+            vsa: self.vsa,
+            data: NotNormalized(data),
+        }
+    }
 }
 
 impl<V: VectorSymbolicArchitecture> Vector<Dynamic, V, Normalized<V>> {
@@ -482,34 +500,26 @@ impl<'a, S: Size, V: VectorSymbolicArchitecture> Add<&'a Vector<S, V, Normalized
 impl<S: Size, V: VectorSymbolicArchitecture> Mul<Self> for Vector<S, V, Normalized<V>> {
     type Output = Self;
 
-    fn mul(self, rhs: Self) -> Self::Output {
+    fn mul(mut self, rhs: Self) -> Self::Output {
         assert_eq!(
             self.size, rhs.size,
             "cannot bind vectors of different sizes"
         );
-        let data = V::bind(&self.data.0, &rhs.data.0);
-        Self {
-            size: self.size,
-            vsa: self.vsa,
-            data: Normalized(data),
-        }
+        V::bind(&mut self.data.0, &rhs.data.0);
+        self
     }
 }
 
 impl<'a, S: Size, V: VectorSymbolicArchitecture> Mul<&'a Self> for Vector<S, V, Normalized<V>> {
     type Output = Self;
 
-    fn mul(self, rhs: &'a Self) -> Self::Output {
+    fn mul(mut self, rhs: &'a Self) -> Self::Output {
         assert_eq!(
             self.size, rhs.size,
             "cannot bind vectors of different sizes"
         );
-        let data = V::bind(&self.data.0, &rhs.data.0);
-        Self {
-            size: self.size,
-            vsa: self.vsa,
-            data: Normalized(data),
-        }
+        V::bind(&mut self.data.0, &rhs.data.0);
+        self
     }
 }
 
@@ -523,12 +533,97 @@ impl<'a, S: Size, V: VectorSymbolicArchitecture> Mul<&'a Vector<S, V, Normalized
             self.size, rhs.size,
             "cannot bind vectors of different sizes"
         );
-        let data = V::bind(&self.data.0, &rhs.data.0);
+        let mut data = self.data.0.clone();
+        V::bind(&mut data, &rhs.data.0);
         Vector {
             size: self.size,
             vsa: self.vsa.clone(),
             data: Normalized(data),
         }
+    }
+}
+
+impl<S: Size, V: VectorSymbolicArchitecture> Mul<Vector<S, V, NotNormalized<V>>>
+    for Vector<S, V, Normalized<V>>
+{
+    type Output = Vector<S, V, NotNormalized<V>>;
+
+    fn mul(self, rhs: Vector<S, V, NotNormalized<V>>) -> Self::Output {
+        assert_eq!(
+            self.size, rhs.size,
+            "cannot bind vectors of different sizes"
+        );
+        rhs.bind(&self)
+    }
+}
+
+impl<'a, S: Size, V: VectorSymbolicArchitecture> Mul<&'a Vector<S, V, NotNormalized<V>>>
+    for Vector<S, V, Normalized<V>>
+{
+    type Output = Vector<S, V, NotNormalized<V>>;
+
+    fn mul(self, rhs: &'a Vector<S, V, NotNormalized<V>>) -> Self::Output {
+        assert_eq!(
+            self.size, rhs.size,
+            "cannot bind vectors of different sizes"
+        );
+        rhs.clone().bind(&self)
+    }
+}
+
+impl<'a, S: Size, V: VectorSymbolicArchitecture> Mul<&'a Vector<S, V, NotNormalized<V>>>
+    for &Vector<S, V, Normalized<V>>
+{
+    type Output = Vector<S, V, NotNormalized<V>>;
+
+    fn mul(self, rhs: &'a Vector<S, V, NotNormalized<V>>) -> Self::Output {
+        assert_eq!(
+            self.size, rhs.size,
+            "cannot bind vectors of different sizes"
+        );
+        rhs.clone().bind(self)
+    }
+}
+
+impl<S: Size, V: VectorSymbolicArchitecture> Mul<Vector<S, V, Normalized<V>>>
+    for Vector<S, V, NotNormalized<V>>
+{
+    type Output = Vector<S, V, NotNormalized<V>>;
+
+    fn mul(self, rhs: Vector<S, V, Normalized<V>>) -> Self::Output {
+        assert_eq!(
+            self.size, rhs.size,
+            "cannot bind vectors of different sizes"
+        );
+        self.bind(&rhs)
+    }
+}
+
+impl<'a, S: Size, V: VectorSymbolicArchitecture> Mul<&'a Vector<S, V, Normalized<V>>>
+    for Vector<S, V, NotNormalized<V>>
+{
+    type Output = Vector<S, V, NotNormalized<V>>;
+
+    fn mul(self, rhs: &'a Vector<S, V, Normalized<V>>) -> Self::Output {
+        assert_eq!(
+            self.size, rhs.size,
+            "cannot bind vectors of different sizes"
+        );
+        self.bind(rhs)
+    }
+}
+
+impl<'a, S: Size, V: VectorSymbolicArchitecture> Mul<&'a Vector<S, V, Normalized<V>>>
+    for &Vector<S, V, NotNormalized<V>>
+{
+    type Output = Vector<S, V, NotNormalized<V>>;
+
+    fn mul(self, rhs: &'a Vector<S, V, Normalized<V>>) -> Self::Output {
+        assert_eq!(
+            self.size, rhs.size,
+            "cannot bind vectors of different sizes"
+        );
+        self.clone().bind(rhs)
     }
 }
 

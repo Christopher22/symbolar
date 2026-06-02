@@ -259,8 +259,35 @@ macro_rules! define_architecture_bindings {
                 $vector_py::from_inner(py, self.inner.clone().normalize())
             }
 
+            fn bind(
+                &self,
+                py: Python<'_>,
+                other: &$vector_py,
+            ) -> PyResult<Py<$vector_unnormalized_py>> {
+                $vector_unnormalized_py::from_inner(
+                    py,
+                    self.inner.clone().bind(&other.inner),
+                )
+            }
+
+            fn bundle(&self, py: Python<'_>, other: &$vector_py) -> PyResult<Py<$vector_unnormalized_py>> {
+                $vector_unnormalized_py::from_inner(py, &self.inner + &other.inner)
+            }
+
             fn equals(&self, other: &$vector_unnormalized_py) -> bool {
                 self.inner == other.inner
+            }
+
+            fn __add__(&self, py: Python<'_>, other: &$vector_py) -> PyResult<Py<$vector_unnormalized_py>> {
+                self.bundle(py, other)
+            }
+
+            fn __mul__(
+                &self,
+                py: Python<'_>,
+                other: &$vector_py,
+            ) -> PyResult<Py<$vector_unnormalized_py>> {
+                self.bind(py, other)
             }
 
             fn __repr__(&self) -> String {

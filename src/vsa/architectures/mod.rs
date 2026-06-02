@@ -46,7 +46,10 @@ pub trait VectorSymbolicArchitecture: Clone {
     fn similarity(a: &Self::Storage, b: &Self::Storage) -> f64;
 
     /// Bind two vectors.
-    fn bind(a: &Self::Storage, b: &Self::Storage) -> Self::Storage;
+    fn bind(a: &mut Self::Storage, b: &Self::Storage);
+
+    /// Bind two vectors.
+    fn bind_with_accumulator(a: &mut Self::Accumulator, b: &Self::Storage);
 
     /// Bundle a an accumulator with a vector.
     fn bundle(&self, accumulator: &mut Self::Accumulator, vector: &Self::Storage);

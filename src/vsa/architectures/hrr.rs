@@ -51,6 +51,23 @@ impl<R: FloatResolution, Rng: rand::Rng> HolographicReducedRepresentation<R, Rng
             .sum::<R>()
             .sqrt()
     }
+
+    fn bind_values(a: &Vec<R>, b: &Vec<R>) -> Vec<R> {
+        a.enforce_constraints(b);
+
+        let len = a.len();
+        let mut out = vec![R::ZERO; len];
+        for (k, out_slot) in out.iter_mut().enumerate() {
+            let mut sum = R::ZERO;
+            for (i, &a_i) in a.iter().enumerate() {
+                let j = (k + len - i) % len;
+                sum += a_i * b[j];
+            }
+            *out_slot = sum;
+        }
+
+        out
+    }
 }
 
 impl<R: FloatResolution, Rng: rand::Rng> VectorSymbolicArchitecture
@@ -110,21 +127,12 @@ impl<R: FloatResolution, Rng: rand::Rng> VectorSymbolicArchitecture
             })
     }
 
-    fn bind(a: &Self::Storage, b: &Self::Storage) -> Self::Storage {
-        a.enforce_constraints(b);
+    fn bind(a: &mut Self::Storage, b: &Self::Storage) {
+        *a = Self::bind_values(a, b);
+    }
 
-        let len = a.len();
-        let mut out = vec![R::ZERO; len];
-        for (k, out_slot) in out.iter_mut().enumerate() {
-            let mut sum = R::ZERO;
-            for (i, &a_i) in a.iter().enumerate() {
-                let j = (k + len - i) % len;
-                sum += a_i * b[j];
-            }
-            *out_slot = sum;
-        }
-
-        out
+    fn bind_with_accumulator(a: &mut Self::Accumulator, b: &Self::Storage) {
+        *a = Self::bind_values(a, b);
     }
 
     fn permute(a: &mut Self::Storage, shifts: usize) {
@@ -184,7 +192,8 @@ mod tests {
         let a = vec![0.2, -0.4, 0.1, 0.6, -0.3];
         let b = vec![-0.5, 0.7, 0.2, -0.1, 0.4];
 
-        let bound = HolographicReducedRepresentation::<f64, rand::rngs::StdRng>::bind(&a, &b);
+        let mut bound = a.clone();
+        HolographicReducedRepresentation::<f64, rand::rngs::StdRng>::bind(&mut bound, &b);
         let expected = vec![-0.36, 0.26, -0.02, -0.45, 0.71];
 
         for (actual, expected) in bound.iter().zip(expected.iter()) {

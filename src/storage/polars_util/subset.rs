@@ -99,8 +99,12 @@ impl<'a, S: Size, V: VectorSymbolicArchitecture> Subset<'a, S, V> {
                     };
 
                     let column_vector_index = self.columns[x];
-                    let bound = V::bind(
-                        &self.storage.vectors.vectors[column_vector_index.0].data.0,
+                    let mut bound = self.storage.vectors.vectors[column_vector_index.0]
+                        .data
+                        .0
+                        .clone();
+                    V::bind(
+                        &mut bound,
                         &self.storage.vectors.vectors[vector_index.0].data.0,
                     );
                     let value = V::denormalize(bound);
@@ -150,11 +154,14 @@ impl<'a, S: Size, V: VectorSymbolicArchitecture> Subset<'a, S, V> {
     pub fn bind_dataset(&self) -> Option<Vector<S, V, Normalized<V>>> {
         let rows = self.bundle_rows::<Normalized<V>>();
         rows.into_iter().fold(None, |acc, row| match (acc, row) {
-            (Some(acc_vector), Some(row_vector)) => Some(Vector::new(
-                acc_vector.vsa.clone(),
-                acc_vector.size,
-                V::denormalize(V::bind(&acc_vector.data.0, &row_vector.data.0)),
-            )),
+            (Some(mut acc_vector), Some(row_vector)) => {
+                V::bind(&mut acc_vector.data.0, &row_vector.data.0);
+                Some(Vector::new(
+                    acc_vector.vsa,
+                    acc_vector.size,
+                    V::denormalize(acc_vector.data.0),
+                ))
+            }
             (None, Some(row_vector)) => Some(row_vector),
             (acc, None) => acc,
         })

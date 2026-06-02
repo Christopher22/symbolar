@@ -149,12 +149,12 @@ impl<R: UIntResolution, RM: IntResolution, Rng: rand::Rng> VectorSymbolicArchite
             })
     }
 
-    fn bind(a: &Self::Storage, b: &Self::Storage) -> Self::Storage {
+    fn bind(a: &mut Self::Storage, b: &Self::Storage) {
         a.enforce_constraints(b);
 
-        let mut out = a.0.clone();
-        out ^= b.0.as_bitslice();
-        PlusMinusOnes(!out)
+        for (mut acc_bit, bit) in a.0.iter_mut().zip(b.0.iter()) {
+            *acc_bit = *acc_bit == *bit;
+        }
     }
 
     fn permute(a: &mut Self::Storage, shifts: usize) {
@@ -171,6 +171,19 @@ impl<R: UIntResolution, RM: IntResolution, Rng: rand::Rng> VectorSymbolicArchite
         a.0.rotate_right(shift);
     }
 
+    fn bind_with_accumulator(a: &mut Self::Accumulator, b: &Self::Storage) {
+        debug_assert_eq!(
+            a.len(),
+            b.len(),
+            "cannot operate on vectors with different sizes"
+        );
+        debug_assert!(!a.is_empty(), "cannot operate on vectors with size 0");
+        for (acc, bit) in a.iter_mut().zip(b.0.iter()) {
+            if !*bit {
+                *acc = -*acc;
+            }
+        }
+    }
     fn similarity(a: &Self::Storage, b: &Self::Storage) -> f64 {
         a.enforce_constraints(b);
 
