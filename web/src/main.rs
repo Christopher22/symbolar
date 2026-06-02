@@ -6,7 +6,10 @@ use dioxus_components::{
 use std::num::NonZeroUsize;
 use symbolar::{
     Dynamic, Expression, Storage,
-    architectures::{BinarySpatterCode, HolographicReducedRepresentation},
+    architectures::{
+        BinarySpatterCode, HolographicReducedRepresentation, MultiplyAddPermute,
+        VectorDerivedTransformationBinding,
+    },
 };
 
 const FAVICON: Asset = asset!("/assets/favicon.ico");
@@ -24,7 +27,9 @@ fn main() {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Architecture {
     Bsc,
+    Map,
     Hrr,
+    Vtb,
 }
 
 impl Architecture {
@@ -32,21 +37,37 @@ impl Architecture {
         match self {
             Self::Bsc => "bsc",
             Self::Hrr => "hrr",
+            Self::Map => "map",
+            Self::Vtb => "vtb",
         }
     }
+}
 
-    fn parse(value: &str) -> Option<Self> {
-        match value {
-            "bsc" => Some(Self::Bsc),
-            "hrr" => Some(Self::Hrr),
-            _ => None,
+impl std::str::FromStr for Architecture {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "bsc" => Ok(Self::Bsc),
+            "hrr" => Ok(Self::Hrr),
+            "map" => Ok(Self::Map),
+            "vtb" => Ok(Self::Vtb),
+            _ => return Err(()),
         }
+    }
+}
+
+impl std::fmt::Display for Architecture {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_value())
     }
 }
 
 enum AppStorage {
     Bsc(Storage<Dynamic, BinarySpatterCode<u8>>),
     Hrr(Storage<Dynamic, HolographicReducedRepresentation<f64>>),
+    Map(Storage<Dynamic, MultiplyAddPermute<usize, isize>>),
+    Vtb(Storage<Dynamic, VectorDerivedTransformationBinding<f64>>),
 }
 
 impl AppStorage {
@@ -61,6 +82,13 @@ impl AppStorage {
                 Storage::new(HolographicReducedRepresentation::default(), size)
                     .expect("valid HRR size"),
             ),
+            Architecture::Map => Self::Map(
+                Storage::new(MultiplyAddPermute::default(), size).expect("valid MAP size"),
+            ),
+            Architecture::Vtb => Self::Vtb(
+                Storage::new(VectorDerivedTransformationBinding::default(), size)
+                    .expect("valid VTB size"),
+            ),
         }
     }
 
@@ -68,6 +96,8 @@ impl AppStorage {
         match self {
             Self::Bsc(storage) => storage.get(&name).is_some(),
             Self::Hrr(storage) => storage.get(&name).is_some(),
+            Self::Map(storage) => storage.get(&name).is_some(),
+            Self::Vtb(storage) => storage.get(&name).is_some(),
         }
     }
 
@@ -77,6 +107,12 @@ impl AppStorage {
                 storage.push(name);
             }
             Self::Hrr(storage) => {
+                storage.push(name);
+            }
+            Self::Map(storage) => {
+                storage.push(name);
+            }
+            Self::Vtb(storage) => {
                 storage.push(name);
             }
         }
@@ -114,6 +150,35 @@ impl AppStorage {
                     .map_err(|err| format!("Unknown value in query: {err}"))?
                     .into_owned();
 
+                Ok(names
+                    .iter()
+                    .map(|name| {
+                        storage
+                            .get(&name.as_str())
+                            .map(|item| item.similarity(&query_vector))
+                    })
+                    .collect())
+            }
+            Self::Map(storage) => {
+                let query_vector = storage
+                    .execute(&expression)
+                    .map_err(|err| format!("Unknown value in query: {err}"))?
+                    .into_owned();
+
+                Ok(names
+                    .iter()
+                    .map(|name| {
+                        storage
+                            .get(&name.as_str())
+                            .map(|item| item.similarity(&query_vector))
+                    })
+                    .collect())
+            }
+            Self::Vtb(storage) => {
+                let query_vector = storage
+                    .execute(&expression)
+                    .map_err(|err| format!("Unknown value in query: {err}"))?
+                    .into_owned();
                 Ok(names
                     .iter()
                     .map(|name| {
@@ -259,7 +324,9 @@ fn ControlSidebar(
                             value: "{architecture().as_value()}",
                             onchange: move |event| on_architecture_change.call(event.value()),
                             option { value: "bsc", "Binary Spatter Code (BSC)" }
+                            option { value: "map", "Multiply Add Permute (MAP)" }
                             option { value: "hrr", "Holographic Reduced Representation (HRR)" }
+                            option { value: "vtb", "Vector-derived Transformation Binding (VTB)" }
                         }
                     }
 
@@ -330,7 +397,7 @@ fn App() -> Element {
                         new_item,
                         item_count: names_list.len(),
                         on_architecture_change: move |value: String| {
-                            if let Some(next_architecture) = Architecture::parse(&value) {
+                            if let Ok(next_architecture) = value.parse::<Architecture>() {
                                 if next_architecture != architecture() {
                                     architecture.set(next_architecture);
                                     storage.set(AppStorage::new(next_architecture, dimensions()));
