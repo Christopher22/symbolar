@@ -18,6 +18,16 @@ cd python
 maturin develop
 ```
 
+### Performance
+For best performance, compile `symbolar` with CPU-specific optimizations enabled, for example like this: `RUSTFLAGS="-C target-cpu=native"`, `RUSTFLAGS="-C target-cpu=native -C target-feature=-prefer-256-bit"` (to enable AVX512), or `RUSTFLAGS="-C target-cpu=haswell"` (to enable all features supported by CPUs more recent than Haswell (2013)).
+
+For a full list of supported CPU targets and features, run:
+
+```sh
+rustc --print target-cpus
+rustc --print target-features
+```
+
 ## Quick Start
 
 The following code reproduces the famous "What is the Dollar in Mexico"? example. The documentation is available [here](https://christopher22.github.io/symbolar/docs/symbolar/).

@@ -301,3 +301,4 @@ $RECYCLE.BIN/
 .vscode
 
 python/.venv
+experiments
