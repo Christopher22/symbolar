@@ -3,7 +3,7 @@ use polars::prelude::*;
 use super::ColumnType;
 
 use crate::{
-    Normalized, Size, Storage, Vector, VectorIndex, VectorType,
+    Normalized, NotNormalized, Size, Storage, Vector, VectorIndex, VectorType,
     architectures::VectorSymbolicArchitecture,
 };
 
@@ -85,86 +85,195 @@ impl<'a, S: Size, V: VectorSymbolicArchitecture> Subset<'a, S, V> {
         })
     }
 
-    /// Get the vectors corresponding to a specific rows without normalization.
-    pub fn bundle_rows<T: VectorType<V>>(&self) -> Vec<Option<Vector<S, V, T>>> {
-        (0..self.height())
-            // Calculate each row
-            .map(|y| {
-                let mut bundled: Option<V::Accumulator> = None;
-
-                for x in 0..self.width {
-                    let index = self.calculate_index(x, y);
-                    let Some(vector_index) = self.vectors[index] else {
-                        continue;
-                    };
-
-                    let column_vector_index = self.columns[x];
-                    let mut bound = self.storage.vectors.vectors[column_vector_index.0]
-                        .data
-                        .0
-                        .clone();
-                    V::bind(
-                        &mut bound,
-                        &self.storage.vectors.vectors[vector_index.0].data.0,
-                    );
-                    let value = V::denormalize(bound);
-
-                    match bundled.as_mut() {
-                        Some(acc) => self
-                            .storage
+    /// Iterate through the rows of the subset, bundling the vectors for each row into a single vector.
+    pub fn bundle_rows<T: VectorType<V>>(&self) -> impl Iterator<Item = Option<Vector<S, V, T>>> {
+        RowIterator::from(self).map(|sample_iter| {
+            sample_iter
+                .filter_map(|x| x.map(V::denormalize))
+                .fold(None, |acc, value| match acc {
+                    Some(mut acc) => {
+                        self.storage
                             .vectors
                             .vsa
-                            .bundle_with_accumulator(acc, &value),
-                        None => bundled = Some(value),
+                            .bundle_with_accumulator(&mut acc, &value);
+                        Some(acc)
                     }
-                }
-
-                bundled.map(|vector_unnormalized| {
+                    None => Some(value),
+                })
+                .map(|vector_unnormalized| {
                     let vsa = self.storage.vectors.vsa.clone();
                     Vector::new(vsa, self.storage.vectors.size, vector_unnormalized)
                 })
+        })
+    }
+
+    /// Iterate through the rows of the subset, binding the vectors for each row into a single vector.
+    pub fn bind_rows(&self) -> impl Iterator<Item = Option<Vector<S, V, Normalized<V>>>> {
+        RowIterator::from(self).map(|sample_iter| {
+            sample_iter
+                .flatten()
+                .fold(None, |acc: Option<V::Storage>, value| match acc {
+                    Some(mut acc) => {
+                        V::bind(&mut acc, &value);
+                        Some(acc)
+                    }
+                    None => Some(value),
+                })
+                .map(|vector| {
+                    let vsa = self.storage.vectors.vsa.clone();
+                    Vector::from_normalized(vsa, self.storage.vectors.size, vector)
+                })
+        })
+    }
+
+    /// Iterate through the rows of the subset, generating combinatorial bundles of the vectors for each row.
+    pub fn bundle_rows_combinatorial(
+        &self,
+        ways: usize,
+    ) -> impl Iterator<Item = Option<Vector<S, V, NotNormalized<V>>>> {
+        RowIterator::from(self).map(move |sample_iter| {
+            // Flatten cleanly drops the `None` values (missing data slots) yielded
+            // by the corrected SampleIterator, natively implementing our missing-data theory.
+            let features: Vec<V::Storage> = sample_iter.flatten().collect();
+
+            if features.is_empty() {
+                return None;
+            }
+
+            let mut row_accumulator: Option<V::Accumulator> = None;
+            let n = features.len();
+
+            // Local helper to recursively generate mathematical combinations of indices
+            fn combine(
+                start: usize,
+                n: usize,
+                k: usize,
+                current: &mut Vec<usize>,
+                result: &mut Vec<Vec<usize>>,
+            ) {
+                if current.len() == k {
+                    result.push(current.clone());
+                    return;
+                }
+                for i in start..n {
+                    current.push(i);
+                    combine(i + 1, n, k, current, result);
+                    current.pop();
+                }
+            }
+
+            // Construct all k-way combinations up to `ways`
+            for k in 1..=ways {
+                if k > n {
+                    break; // Cannot generate combinations larger than available valid features
+                }
+
+                let mut combos = Vec::new();
+                combine(0, n, k, &mut Vec::with_capacity(k), &mut combos);
+
+                for combo in combos {
+                    // Start the binding term with the first feature in the combination
+                    let mut bound_term = features[combo[0]].clone();
+
+                    // Bind the remaining features
+                    for &idx in &combo[1..] {
+                        V::bind(&mut bound_term, &features[idx]);
+                    }
+
+                    // Convert into un-normalized state so they can be summed without amplitude loss
+                    let term_denorm = V::denormalize(bound_term);
+
+                    // Add into the row's mathematical superposition
+                    match &mut row_accumulator {
+                        Some(acc) => {
+                            self.storage
+                                .vectors
+                                .vsa
+                                .bundle_with_accumulator(acc, &term_denorm);
+                        }
+                        None => {
+                            row_accumulator = Some(term_denorm);
+                        }
+                    }
+                }
+            }
+
+            row_accumulator.map(|acc| {
+                let vsa = self.storage.vectors.vsa.clone();
+                Vector::new(vsa, self.storage.vectors.size, acc)
             })
-            .collect()
+        })
     }
 
     /// Bundle the entire dataset into a single vector.
     pub fn bundle_dataset<T1: VectorType<V>, T2: VectorType<V>>(&self) -> Option<Vector<S, V, T2>> {
-        let rows = self.bundle_rows::<T1>();
-        let mut bundled: Option<V::Accumulator> = None;
+        self.bundle_vectors(self.bundle_rows::<T1>())
+    }
 
-        for row in rows.into_iter().flatten() {
-            let value = row.data.into().0;
-            match bundled.as_mut() {
-                Some(acc) => self
-                    .storage
-                    .vectors
-                    .vsa
-                    .bundle_with_accumulator(acc, &value),
-                None => bundled = Some(value),
-            }
-        }
+    /// Bundle combinatorial interactions of the entire dataset into a single vector.
+    pub fn bundle_dataset_combinatorial(
+        &self,
+        ways: usize,
+    ) -> Option<Vector<S, V, NotNormalized<V>>> {
+        self.bundle_vectors(self.bundle_rows_combinatorial(ways))
+    }
 
-        bundled.map(|vector_unnormalized| {
-            let vsa = self.storage.vectors.vsa.clone();
-            Vector::new(vsa, self.storage.vectors.size, vector_unnormalized)
-        })
+    /// Bind the bundled rows of dataset into a single vector.
+    pub fn bind_dataset(&self) -> Option<Vector<S, V, Normalized<V>>> {
+        self.bind_vectors(self.bundle_rows())
     }
 
     /// Bind the entire dataset into a single vector.
-    pub fn bind_dataset(&self) -> Option<Vector<S, V, Normalized<V>>> {
-        let rows = self.bundle_rows::<Normalized<V>>();
-        rows.into_iter().fold(None, |acc, row| match (acc, row) {
-            (Some(mut acc_vector), Some(row_vector)) => {
-                V::bind(&mut acc_vector.data.0, &row_vector.data.0);
-                Some(Vector::new(
-                    acc_vector.vsa,
-                    acc_vector.size,
-                    V::denormalize(acc_vector.data.0),
-                ))
-            }
-            (None, Some(row_vector)) => Some(row_vector),
-            (acc, None) => acc,
-        })
+    pub fn bind_entire_dataset(&self) -> Option<Vector<S, V, Normalized<V>>> {
+        self.bind_vectors(self.bind_rows())
+    }
+
+    fn bundle_vectors<T1: VectorType<V>, T2: VectorType<V>>(
+        &self,
+        iterator: impl Iterator<Item = Option<Vector<S, V, T1>>>,
+    ) -> Option<Vector<S, V, T2>> {
+        iterator
+            .flatten()
+            .fold(
+                None,
+                |acc: Option<V::Accumulator>, row_vector: Vector<S, V, T1>| match acc {
+                    Some(mut acc) => {
+                        let row_vector_denormalized = row_vector.data.into().0;
+                        self.storage
+                            .vectors
+                            .vsa
+                            .bundle_with_accumulator(&mut acc, &row_vector_denormalized);
+                        Some(acc)
+                    }
+                    None => Some(row_vector.data.into().0),
+                },
+            )
+            .map(|vector_unnormalized| {
+                let vsa = self.storage.vectors.vsa.clone();
+                Vector::new(vsa, self.storage.vectors.size, vector_unnormalized)
+            })
+    }
+
+    fn bind_vectors(
+        &self,
+        iterator: impl Iterator<Item = Option<Vector<S, V, Normalized<V>>>>,
+    ) -> Option<Vector<S, V, Normalized<V>>> {
+        iterator
+            .flatten()
+            .fold(
+                None,
+                |acc: Option<V::Storage>, row_vector: Vector<S, V, Normalized<V>>| match acc {
+                    Some(mut acc) => {
+                        V::bind(&mut acc, &row_vector.data.0);
+                        Some(acc)
+                    }
+                    None => Some(row_vector.data.0),
+                },
+            )
+            .map(|vector| {
+                let vsa = self.storage.vectors.vsa.clone();
+                Vector::from_normalized(vsa, self.storage.vectors.size, vector)
+            })
     }
 
     fn height(&self) -> usize {
@@ -225,6 +334,101 @@ impl std::fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
+#[derive(Debug, Clone)]
+struct RowIterator<'a, 'b, S: Size, V: VectorSymbolicArchitecture> {
+    subset: &'a Subset<'b, S, V>,
+    y_iter: std::ops::Range<usize>,
+}
+
+impl<'a, 'b, S: Size, V: VectorSymbolicArchitecture> From<&'a Subset<'b, S, V>>
+    for RowIterator<'a, 'b, S, V>
+{
+    fn from(subset: &'a Subset<'b, S, V>) -> Self {
+        Self {
+            subset,
+            y_iter: 0..subset.height(),
+        }
+    }
+}
+
+impl<'a, 'b, S: Size, V: VectorSymbolicArchitecture> Iterator for RowIterator<'a, 'b, S, V> {
+    type Item = SampleIterator<'a, 'b, S, V>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let y = self.y_iter.next()?;
+        Some(SampleIterator {
+            subset: self.subset,
+            y,
+            x_iter: 0..self.subset.width,
+        })
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.y_iter.size_hint()
+    }
+}
+
+impl<'a, 'b, S: Size, V: VectorSymbolicArchitecture> ExactSizeIterator
+    for RowIterator<'a, 'b, S, V>
+{
+    fn len(&self) -> usize {
+        self.y_iter.len()
+    }
+}
+
+impl<'a, 'b, S: Size, V: VectorSymbolicArchitecture> std::iter::FusedIterator
+    for RowIterator<'a, 'b, S, V>
+{
+}
+
+#[derive(Debug, Clone)]
+struct SampleIterator<'a, 'b, S: Size, V: VectorSymbolicArchitecture> {
+    subset: &'a Subset<'b, S, V>,
+    y: usize,
+    x_iter: std::ops::Range<usize>,
+}
+
+impl<'a, 'b, S: Size, V: VectorSymbolicArchitecture> Iterator for SampleIterator<'a, 'b, S, V> {
+    type Item = Option<V::Storage>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let x = self.x_iter.next()?;
+        let index = self.subset.calculate_index(x, self.y);
+        let Some(vector_index) = self.subset.vectors[index] else {
+            return Some(None);
+        };
+
+        let column_vector_index = self.subset.columns[x];
+        let mut bound = self.subset.storage.vectors.vectors[column_vector_index.0]
+            .data
+            .0
+            .clone();
+        V::bind(
+            &mut bound,
+            &self.subset.storage.vectors.vectors[vector_index.0].data.0,
+        );
+
+        Some(Some(bound))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.x_iter.size_hint()
+    }
+}
+
+impl<'a, 'b, S: Size, V: VectorSymbolicArchitecture> ExactSizeIterator
+    for SampleIterator<'a, 'b, S, V>
+{
+    fn len(&self) -> usize {
+        self.x_iter.len()
+    }
+}
+
+impl<'a, 'b, S: Size, V: VectorSymbolicArchitecture> std::iter::FusedIterator
+    for SampleIterator<'a, 'b, S, V>
+{
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -281,7 +485,7 @@ mod tests {
     }
 
     #[test]
-    fn test_dataset_bind_vector() {
+    fn test_dataset_bind_bundled_vector() {
         let df = create_dollar_dataframe();
         let vsa = crate::architectures::MultiplyAddPermute::<u8>::new(42);
         let storage =
@@ -298,6 +502,27 @@ mod tests {
                 .expect("valid execution")
                 .into_owned(),
             subset.bind_dataset().expect("valid dataset vector")
+        );
+    }
+
+    #[test]
+    fn test_dataset_bind_vector_entire_dataset() {
+        let df = create_dollar_dataframe();
+        let vsa = crate::architectures::MultiplyAddPermute::<u8>::new(42);
+        let storage =
+            Storage::from_dataframe(vsa, crate::Fixed::<10000>, &df).expect("valid vector storage");
+        let expression: crate::Expression =
+            "((NAM * USA) * (CAP * WDC) * (MON * DOL)) * ((NAM * MEX) * (CAP * MXC) * (MON * PES))"
+                .parse()
+                .expect("valid expression");
+
+        let subset = storage.subset(&df).expect("valid subset");
+        assert_eq!(
+            storage
+                .execute(&expression)
+                .expect("valid execution")
+                .into_owned(),
+            subset.bind_entire_dataset().expect("valid dataset vector")
         );
     }
 }

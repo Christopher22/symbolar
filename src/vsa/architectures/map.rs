@@ -32,6 +32,10 @@ impl<R: UIntResolution> Storage for PlusMinusOnes<R> {
         );
         debug_assert!(!self.0.is_empty(), "cannot operate on vectors with size 0");
     }
+
+    fn serialize(&self) -> Vec<f64> {
+        self.0.iter().map(|b| if *b { 1.0 } else { 0.0 }).collect()
+    }
 }
 
 impl<R: UIntResolution> PrimaryStorage for PlusMinusOnes<R> {

@@ -1,6 +1,6 @@
 use std::{
     num::NonZero,
-    ops::{Add, Mul},
+    ops::{Add, Deref, Mul},
 };
 
 use crate::{
@@ -66,14 +66,12 @@ impl Size for Dynamic {
 
 /// A trait indicating whether a vector is normalized or not.
 pub trait VectorType<V: VectorSymbolicArchitecture>:
-    std::fmt::Debug
-    + Clone
-    + PartialEq
-    + std::ops::Index<usize, Output = Self::Primitive>
-    + Into<NotNormalized<V>>
+    std::fmt::Debug + Clone + PartialEq + Into<NotNormalized<V>> + Deref<Target = Self::Storage>
 {
     /// The underlying primitive type of the vector which can be read.
     type Primitive: Copy + PartialEq + PartialOrd;
+    /// The underyling storage.
+    type Storage: Storage<Primitive = Self::Primitive>;
 
     /// Create a vector type from the architecture and data.
     fn from(vsa: &V, data: V::Accumulator) -> Self;
@@ -85,6 +83,7 @@ pub struct Normalized<V: VectorSymbolicArchitecture>(pub(crate) V::Storage);
 
 impl<V: VectorSymbolicArchitecture> VectorType<V> for Normalized<V> {
     type Primitive = <V::Storage as Storage>::Primitive;
+    type Storage = V::Storage;
 
     fn from(vsa: &V, data: V::Accumulator) -> Self {
         Self(vsa.normalize(data))
@@ -114,11 +113,11 @@ impl<V: VectorSymbolicArchitecture> std::fmt::Debug for Normalized<V> {
     }
 }
 
-impl<V: VectorSymbolicArchitecture> std::ops::Index<usize> for Normalized<V> {
-    type Output = <V::Storage as Storage>::Primitive;
+impl<V: VectorSymbolicArchitecture> Deref for Normalized<V> {
+    type Target = V::Storage;
 
-    fn index(&self, index: usize) -> &Self::Output {
-        &self.0[index]
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
@@ -127,6 +126,7 @@ impl<V: VectorSymbolicArchitecture> std::ops::Index<usize> for Normalized<V> {
 pub struct NotNormalized<V: VectorSymbolicArchitecture>(pub(crate) V::Accumulator);
 impl<V: VectorSymbolicArchitecture> VectorType<V> for NotNormalized<V> {
     type Primitive = <V::Accumulator as Storage>::Primitive;
+    type Storage = V::Accumulator;
 
     fn from(_vsa: &V, data: V::Accumulator) -> Self {
         Self(data)
@@ -144,11 +144,12 @@ impl<V: VectorSymbolicArchitecture> std::fmt::Debug for NotNormalized<V> {
         f.debug_tuple("NotNormalized").finish()
     }
 }
-impl<V: VectorSymbolicArchitecture> std::ops::Index<usize> for NotNormalized<V> {
-    type Output = <V::Accumulator as Storage>::Primitive;
 
-    fn index(&self, index: usize) -> &Self::Output {
-        &self.0[index]
+impl<V: VectorSymbolicArchitecture> Deref for NotNormalized<V> {
+    type Target = V::Accumulator;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
@@ -172,9 +173,23 @@ impl<S: Size, V: VectorSymbolicArchitecture, T: VectorType<V>> Vector<S, V, T> {
         let data = T::from(&vsa, data);
         Self { size, vsa, data }
     }
+
+    /// Serialize the vector to a vector of f64.
+    pub fn serialize(&self) -> Vec<f64> {
+        self.data.serialize()
+    }
 }
 
 impl<S: Size, V: VectorSymbolicArchitecture> Vector<S, V, Normalized<V>> {
+    /// Create a vector from normalized data.
+    pub const fn from_normalized(vsa: V, size: S, data: V::Storage) -> Self {
+        Self {
+            size,
+            vsa,
+            data: Normalized(data),
+        }
+    }
+
     /// Create a random vector.
     pub fn random(vsa: &V, size: S) -> Option<Self> {
         if !V::valid_size(size) {

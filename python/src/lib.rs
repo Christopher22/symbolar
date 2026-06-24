@@ -235,6 +235,10 @@ macro_rules! define_architecture_bindings {
             fn __repr__(&self) -> String {
                 format!("{}(size={})", $vector_name, self.inner.size.size())
             }
+
+            fn to_list(&self) -> Vec<f64> {
+                self.inner.serialize()
+            }
         }
 
         #[pyclass(name = $vector_unnormalized_name, extends = PyVector)]
@@ -292,6 +296,10 @@ macro_rules! define_architecture_bindings {
 
             fn __repr__(&self) -> String {
                 format!("{}(size={})", $vector_unnormalized_name, self.inner.size.size())
+            }
+
+            fn to_list(&self) -> Vec<f64> {
+                self.inner.serialize()
             }
         }
 
@@ -451,10 +459,20 @@ macro_rules! define_architecture_bindings {
             fn bundle_rows(&self, py: Python<'_>) -> PyResult<Vec<Option<Py<$vector_py>>>> {
                 let subset = self.build_subset()?;
                 subset
-                    .bundle_rows()
-                    .into_iter()
+                    .bundle_rows::<Normalized<$architecture_inner>>()
                     .map(|item| match item {
                         Some(inner) => Ok(Some($vector_py::from_inner(py, inner)?)),
+                        None => Ok(None),
+                    })
+                    .collect()
+            }
+
+            fn bundle_rows_unnormalized(&self, py: Python<'_>) -> PyResult<Vec<Option<Py<$vector_unnormalized_py>>>> {
+                let subset = self.build_subset()?;
+                subset
+                    .bundle_rows::<NotNormalized<$architecture_inner>>()
+                    .map(|item| match item {
+                        Some(inner) => Ok(Some($vector_unnormalized_py::from_inner(py, inner)?)),
                         None => Ok(None),
                     })
                     .collect()
@@ -477,6 +495,14 @@ macro_rules! define_architecture_bindings {
                     NotNormalized<$architecture_inner>,
                     NotNormalized<$architecture_inner>,
                 >() {
+                    Some(inner) => Ok(Some($vector_unnormalized_py::from_inner(py, inner)?)),
+                    None => Ok(None),
+                }
+            }
+
+            fn bundle_dataset_combinatorial(&self, py: Python<'_>, ways: usize) -> PyResult<Option<Py<$vector_unnormalized_py>>> {
+                let subset = self.build_subset()?;
+                match subset.bundle_dataset_combinatorial(ways) {
                     Some(inner) => Ok(Some($vector_unnormalized_py::from_inner(py, inner)?)),
                     None => Ok(None),
                 }

@@ -84,6 +84,9 @@ pub trait Storage:
 
     /// Checks if two storages are compatible.
     fn enforce_constraints(&self, other: &Self);
+
+    /// Serialize the storage to a vector of f64.
+    fn serialize(&self) -> Vec<f64>;
 }
 
 /// A storage type used for "standard" vector content.
@@ -109,6 +112,10 @@ impl<R: UIntResolution> Storage for BitVec<R, bitvec::order::Lsb0> {
             "cannot operate on vectors with different sizes"
         );
         debug_assert!(!self.is_empty(), "cannot operate on vectors with size 0");
+    }
+
+    fn serialize(&self) -> Vec<f64> {
+        self.iter().map(|b| if *b { 1.0 } else { 0.0 }).collect()
     }
 }
 
@@ -167,15 +174,33 @@ impl<R: Resolution> Storage for Vec<R> {
         );
         debug_assert!(!self.is_empty(), "cannot operate on vectors with size 0");
     }
+
+    fn serialize(&self) -> Vec<f64> {
+        self.iter().map(|v| v.as_()).collect()
+    }
 }
 
 /// A resolution of a data type.
 pub trait Resolution:
-    std::fmt::Debug + std::fmt::Display + Copy + PartialOrd + NumAssign + ConstZero + ConstOne
+    std::fmt::Debug
+    + std::fmt::Display
+    + Copy
+    + PartialOrd
+    + NumAssign
+    + ConstZero
+    + ConstOne
+    + AsPrimitive<f64>
 {
 }
 impl<T> Resolution for T where
-    T: std::fmt::Debug + std::fmt::Display + Copy + PartialOrd + NumAssign + ConstZero + ConstOne
+    T: std::fmt::Debug
+        + std::fmt::Display
+        + Copy
+        + PartialOrd
+        + NumAssign
+        + ConstZero
+        + ConstOne
+        + AsPrimitive<f64>
 {
 }
 
