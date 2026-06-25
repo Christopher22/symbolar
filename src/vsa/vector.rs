@@ -312,6 +312,16 @@ impl<S: Size, V: VectorSymbolicArchitecture> EvaluateOps for Vector<S, V, Normal
     fn multiply(lhs: &Self, rhs: &Self) -> Self {
         lhs * rhs
     }
+
+    fn pow(lhs: &Self, rhs: u32) -> Self {
+        let mut value = lhs.data.0.clone();
+        V::permute(&mut value, rhs as usize);
+        Self {
+            size: lhs.size,
+            vsa: lhs.vsa.clone(),
+            data: Normalized(value),
+        }
+    }
 }
 
 impl<S: Size, V: VectorSymbolicArchitecture, T: VectorType<V>> std::fmt::Debug for Vector<S, V, T> {

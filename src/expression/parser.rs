@@ -48,6 +48,7 @@ impl Parser {
             .replace(')', " ) ")
             .replace('+', " + ")
             .replace('*', " * ")
+            .replace('^', " ^ ")
             .split_whitespace()
             .map(|s| s.to_string())
             .collect()
@@ -71,17 +72,37 @@ impl Parser {
 
     /// Level 2: Multiplication
     fn parse_mul(&mut self) -> Result<Expression, ParseError> {
-        let mut left = self.parse_primary()?;
+        let mut left = self.parse_pow()?;
 
         while self.pos < self.tokens.len() && self.tokens[self.pos] == "*" {
             self.pos += 1; // consume '*'
-            let right = self.parse_primary()?;
+            let right = self.parse_pow()?;
             left = Expression::Mul(Box::new(left), Box::new(right));
         }
         Ok(left)
     }
 
-    /// Level 3: Values and Parentheses (highest precedence)
+    /// Level 3: Power (right-associative)
+    fn parse_pow(&mut self) -> Result<Expression, ParseError> {
+        let base = self.parse_primary()?;
+
+        if self.pos < self.tokens.len() && self.tokens[self.pos] == "^" {
+            self.pos += 1; // consume '^'
+            if self.pos >= self.tokens.len() {
+                return Err(ParseError::InvalidExpression);
+            }
+            let exp_str = self.tokens[self.pos].clone();
+            let exp = exp_str
+                .parse::<u32>()
+                .map_err(|_| ParseError::UnexpectedToken(exp_str))?;
+            self.pos += 1;
+            Ok(Expression::Pow(Box::new(base), exp))
+        } else {
+            Ok(base)
+        }
+    }
+
+    /// Level 4: Values and Parentheses (highest precedence)
     fn parse_primary(&mut self) -> Result<Expression, ParseError> {
         if self.pos >= self.tokens.len() {
             return Err(ParseError::InvalidExpression);
@@ -99,7 +120,7 @@ impl Parser {
                 }
             }
             ")" => Err(ParseError::UnexpectedToken(")".to_string())),
-            "+" | "*" => Err(ParseError::UnexpectedToken(self.tokens[self.pos].clone())),
+            "+" | "*" | "^" => Err(ParseError::UnexpectedToken(self.tokens[self.pos].clone())),
             val => {
                 self.pos += 1;
                 Ok(Expression::Value(Cow::Owned(val.to_string())))

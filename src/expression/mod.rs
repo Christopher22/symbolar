@@ -18,6 +18,8 @@ pub enum Expression {
     Plus(Vec<Expression>),
     /// The product of two expressions.
     Mul(Box<Expression>, Box<Expression>),
+    /// A expression raised to a power
+    Pow(Box<Expression>, u32),
 }
 
 impl Expression {
@@ -53,6 +55,10 @@ impl Expression {
                 let l = lhs.evaluate(variables)?.into_owned();
                 let r = rhs.evaluate(variables)?.into_owned();
                 Ok(Cow::Owned(T::multiply(&l, &r)))
+            }
+            Expression::Pow(base, exp) => {
+                let b = base.evaluate(variables)?.into_owned();
+                Ok(Cow::Owned(T::pow(&b, *exp)))
             }
         }
     }
@@ -115,6 +121,9 @@ impl PartialEq<Expression> for Expression {
                 (lhs.as_ref() == other_lhs.as_ref() && rhs.as_ref() == other_rhs.as_ref())
                     || (lhs.as_ref() == other_rhs.as_ref() && rhs.as_ref() == other_lhs.as_ref())
             }
+            (Expression::Pow(base, exp), Expression::Pow(other_base, other_exp)) => {
+                base.as_ref() == other_base.as_ref() && exp == other_exp
+            }
             _ => false,
         }
     }
@@ -150,6 +159,11 @@ impl Hash for Expression {
                 rhs.hash(&mut h2);
                 state.write_u64(h1.finish().wrapping_add(h2.finish()));
             }
+            Expression::Pow(expr, exp) => {
+                state.write_u8(2);
+                expr.hash(state);
+                state.write_u32(*exp);
+            }
         }
     }
 }
@@ -169,6 +183,7 @@ impl std::fmt::Display for Expression {
                 write!(f, ")")
             }
             Expression::Mul(lhs, rhs) => write!(f, "({} * {})", lhs, rhs),
+            Expression::Pow(base, exp) => write!(f, "({} ^ {})", base, exp),
         }
     }
 }
@@ -215,6 +230,9 @@ pub trait EvaluateOps: Clone {
 
     /// Multiply two values.
     fn multiply(lhs: &Self, rhs: &Self) -> Self;
+
+    /// Raise a value to a power.
+    fn pow(lhs: &Self, rhs: u32) -> Self;
 }
 
 macro_rules! impl_evaluate_ops_numeric {
@@ -236,12 +254,16 @@ macro_rules! impl_evaluate_ops_numeric {
                 fn multiply(lhs: &Self, rhs: &Self) -> Self {
                     *lhs * *rhs
                 }
+
+                fn pow(lhs: &Self, rhs: u32) -> Self {
+                    lhs.pow(rhs)
+                }
             }
         )+
     };
 }
 
-impl_evaluate_ops_numeric!(u8, u16, u32, u64, usize, i8, i16, i32, i64, isize, f32, f64);
+impl_evaluate_ops_numeric!(u8, u16, u32, u64, usize, i8, i16, i32, i64, isize);
 
 #[cfg(test)]
 mod tests {
@@ -350,6 +372,82 @@ mod tests {
             "1 + * 2".parse::<Expression>(),
             Err(ParseError::UnexpectedToken("*".to_string()))
         );
+    }
+
+    #[test]
+    fn test_pow_expression() {
+        let base = Expression::new("x");
+        let expr = Expression::Pow(Box::new(base), 3);
+        assert_eq!("(x ^ 3)", expr.to_string());
+    }
+
+    #[test]
+    fn test_pow_equality() {
+        let a = Expression::Pow(Box::new(Expression::new("x")), 2);
+        let b = Expression::Pow(Box::new(Expression::new("x")), 2);
+        let c = Expression::Pow(Box::new(Expression::new("x")), 3);
+        let d = Expression::Pow(Box::new(Expression::new("y")), 2);
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+        assert_ne!(a, d);
+    }
+
+    #[test]
+    fn test_pow_evaluation() {
+        let expr = Expression::Pow(Box::new(Expression::new("3")), 4);
+        let result = expr
+            .evaluate(|var| {
+                var.parse::<u32>()
+                    .ok()
+                    .map(|value| Cow::<'static, u32>::Owned(value))
+            })
+            .unwrap();
+        assert_eq!(result, Cow::Owned(81u32));
+    }
+
+    #[test]
+    fn test_parsing_pow() {
+        assert_eq!(
+            "x ^ 2".parse::<Expression>().map(|e| e.to_string()),
+            Ok("(x ^ 2)".to_string())
+        );
+
+        // Power binds tighter than multiplication
+        assert_eq!(
+            "x * y ^ 2".parse::<Expression>().map(|e| e.to_string()),
+            Ok("(x * (y ^ 2))".to_string())
+        );
+
+        // Power binds tighter than addition
+        assert_eq!(
+            "x + y ^ 2".parse::<Expression>().map(|e| e.to_string()),
+            Ok("(x + (y ^ 2))".to_string())
+        );
+
+        // Parenthesised base
+        assert_eq!(
+            "(x + y) ^ 3".parse::<Expression>().map(|e| e.to_string()),
+            Ok("((x + y) ^ 3)".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parsing_pow_invalid() {
+        // Missing exponent
+        assert_eq!(
+            "x ^".parse::<Expression>(),
+            Err(ParseError::InvalidExpression)
+        );
+        // Non-integer exponent
+        assert!(matches!(
+            "x ^ y".parse::<Expression>(),
+            Err(ParseError::UnexpectedToken(_))
+        ));
+        // Negative exponent (not supported by u32)
+        assert!(matches!(
+            "x ^ -1".parse::<Expression>(),
+            Err(ParseError::UnexpectedToken(_))
+        ));
     }
 
     #[test]
