@@ -1,7 +1,8 @@
 use std::num::NonZero;
 
 use ::symbolar::{
-    Dynamic, Expression, Normalized, NotNormalized, Size, Storage, Subset, Vector,
+    Dynamic, Expression, Normalized, NotNormalized, SamplesWithColumnVector, SamplesWithPosition,
+    Size, Storage, Subset, Vector,
     architectures::{
         BinarySpatterCode, HolographicReducedRepresentation, MultiplyAddPermute,
         VectorDerivedTransformationBinding,
@@ -459,7 +460,7 @@ macro_rules! define_architecture_bindings {
             fn bundle_rows(&self, py: Python<'_>) -> PyResult<Vec<Option<Py<$vector_py>>>> {
                 let subset = self.build_subset()?;
                 subset
-                    .bundle_rows::<Normalized<$architecture_inner>>()
+                    .bundle_rows::<Normalized<$architecture_inner>, SamplesWithColumnVector>()
                     .map(|item| match item {
                         Some(inner) => Ok(Some($vector_py::from_inner(py, inner)?)),
                         None => Ok(None),
@@ -470,7 +471,7 @@ macro_rules! define_architecture_bindings {
             fn bundle_rows_unnormalized(&self, py: Python<'_>) -> PyResult<Vec<Option<Py<$vector_unnormalized_py>>>> {
                 let subset = self.build_subset()?;
                 subset
-                    .bundle_rows::<NotNormalized<$architecture_inner>>()
+                    .bundle_rows::<NotNormalized<$architecture_inner>, SamplesWithColumnVector>()
                     .map(|item| match item {
                         Some(inner) => Ok(Some($vector_unnormalized_py::from_inner(py, inner)?)),
                         None => Ok(None),
@@ -483,6 +484,7 @@ macro_rules! define_architecture_bindings {
                 match subset.bundle_dataset::<
                     Normalized<$architecture_inner>,
                     Normalized<$architecture_inner>,
+                    SamplesWithColumnVector
                 >() {
                     Some(inner) => Ok(Some($vector_py::from_inner(py, inner)?)),
                     None => Ok(None),
@@ -494,6 +496,7 @@ macro_rules! define_architecture_bindings {
                 match subset.bundle_dataset::<
                     NotNormalized<$architecture_inner>,
                     NotNormalized<$architecture_inner>,
+                    SamplesWithColumnVector
                 >() {
                     Some(inner) => Ok(Some($vector_unnormalized_py::from_inner(py, inner)?)),
                     None => Ok(None),
@@ -508,9 +511,25 @@ macro_rules! define_architecture_bindings {
                 }
             }
 
+            fn bundle_dataset_temporal(&self, py: Python<'_>) -> PyResult<Option<Py<$vector_py>>> {
+                let subset = self.build_subset()?;
+                match subset.bundle_dataset_with_binding::<Normalized<$architecture_inner>, SamplesWithPosition>() {
+                    Some(inner) => Ok(Some($vector_py::from_inner(py, inner)?)),
+                    None => Ok(None),
+                }
+            }
+
+            fn bundle_dataset_temporal_unnormalized(&self, py: Python<'_>) -> PyResult<Option<Py<$vector_unnormalized_py>>> {
+                let subset = self.build_subset()?;
+                match subset.bundle_dataset_with_binding::<NotNormalized<$architecture_inner>, SamplesWithPosition>() {
+                    Some(inner) => Ok(Some($vector_unnormalized_py::from_inner(py, inner)?)),
+                    None => Ok(None),
+                }
+            }
+
             fn bind_dataset(&self, py: Python<'_>) -> PyResult<Option<Py<$vector_py>>> {
                 let subset = self.build_subset()?;
-                match subset.bind_dataset() {
+                match subset.bind_dataset::<SamplesWithColumnVector>() {
                     Some(inner) => Ok(Some($vector_py::from_inner(py, inner)?)),
                     None => Ok(None),
                 }

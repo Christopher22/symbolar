@@ -5,7 +5,9 @@ use crate::{Queryable, Selector, Size, Storage, Value, architectures::VectorSymb
 
 use super::VectorIndex;
 
-pub use self::subset::{Error as SubsetError, Subset};
+pub use self::subset::{
+    Error as SubsetError, IntoSampleIterator, SamplesWithColumnVector, SamplesWithPosition, Subset,
+};
 
 #[derive(Debug, Clone)]
 pub(crate) struct ColumnData {

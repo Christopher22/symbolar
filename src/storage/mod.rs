@@ -12,7 +12,9 @@ use crate::{
 };
 
 #[cfg(feature = "polars")]
-pub use self::polars_util::{Column, Subset, SubsetError};
+pub use self::polars_util::{
+    Column, IntoSampleIterator, SamplesWithColumnVector, SamplesWithPosition, Subset, SubsetError,
+};
 pub use self::queryable::Queryable;
 pub use self::selector::Selector;
 
