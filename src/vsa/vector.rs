@@ -203,6 +203,11 @@ impl<S: Size, V: VectorSymbolicArchitecture> Vector<S, V, Normalized<V>> {
         })
     }
 
+    /// The underlying storage of the vector.
+    pub fn as_storage(&self) -> &V::Storage {
+        &self.data.0
+    }
+
     /// Permute the vector.
     pub fn permute(self, shifts: usize) -> Self {
         let mut data = self.data.0;

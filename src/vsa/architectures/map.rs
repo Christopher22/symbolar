@@ -69,6 +69,7 @@ pub struct MultiplyAddPermute<
 > {
     resolution: std::marker::PhantomData<fn(RM) -> R>,
     rng: Arc<parking_lot::RwLock<Rng>>,
+    seed: u64,
 }
 
 impl<R: UIntResolution, RM: IntResolution, Rng: rand::Rng> MultiplyAddPermute<R, RM, Rng> {
@@ -85,6 +86,7 @@ impl<R: UIntResolution, RM: IntResolution, Rng: rand::Rng + SeedableRng>
         Self {
             resolution: std::marker::PhantomData,
             rng: Arc::new(parking_lot::RwLock::new(Rng::seed_from_u64(seed))),
+            seed,
         }
     }
 }
@@ -96,6 +98,7 @@ impl<R: UIntResolution, RM: IntResolution, Rng: rand::Rng> Clone
         Self {
             resolution: std::marker::PhantomData,
             rng: self.rng.clone(),
+            seed: self.seed,
         }
     }
 }
@@ -138,8 +141,28 @@ impl<R: UIntResolution + PrimInt, RM: IntResolution, Rng: rand::Rng> VectorSymbo
         out
     }
 
+    fn seed(&self) -> u64 {
+        self.seed
+    }
+
     fn random(&self, size: usize) -> Self::Storage {
-        PlusMinusOnes::random(&mut self.rng.write(), size)
+        PlusMinusOnes::random(&mut *self.rng.write(), size)
+    }
+
+    fn random_with<G: rand::Rng>(&self, rng: &mut G, size: usize) -> Self::Storage {
+        PlusMinusOnes::random(rng, size)
+    }
+
+    fn accumulate_dense(a: &Self::Storage, out: &mut [f32], weight: f32) {
+        // A set bit is +1, an unset bit -1.
+        for (target, bit) in out.iter_mut().zip(a.0.iter().by_vals()) {
+            *target += weight * (2.0 * f32::from(u8::from(bit)) - 1.0);
+        }
+    }
+
+    fn normalize_dense(&self, dense: &[f32]) -> Self::Storage {
+        // Ties are kept as +1, matching `normalize`.
+        PlusMinusOnes(dense.iter().map(|value| *value >= 0.0).collect())
     }
 
     fn bundle(&self, accumulator: &mut Self::Accumulator, vector: &Self::Storage) {

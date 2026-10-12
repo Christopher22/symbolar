@@ -13,6 +13,7 @@ use super::{
 pub struct BinarySpatterCode<R: UIntResolution = u8, Rng: rand::Rng = rand::rngs::StdRng> {
     resolution: std::marker::PhantomData<fn() -> R>,
     rng: Arc<parking_lot::RwLock<Rng>>,
+    seed: u64,
 }
 
 impl<R: UIntResolution, Rng: rand::Rng> Clone for BinarySpatterCode<R, Rng> {
@@ -20,6 +21,7 @@ impl<R: UIntResolution, Rng: rand::Rng> Clone for BinarySpatterCode<R, Rng> {
         Self {
             resolution: std::marker::PhantomData,
             rng: self.rng.clone(),
+            seed: self.seed,
         }
     }
 }
@@ -30,6 +32,7 @@ impl<R: UIntResolution, Rng: rand::Rng + SeedableRng> BinarySpatterCode<R, Rng> 
         Self {
             resolution: std::marker::PhantomData,
             rng: Arc::new(parking_lot::RwLock::new(Rng::seed_from_u64(seed))),
+            seed,
         }
     }
 }
@@ -61,8 +64,37 @@ where
     type Storage = BitVec<R, Lsb0>;
     type Accumulator = BitVec<R, Lsb0>;
 
+    fn seed(&self) -> u64 {
+        self.seed
+    }
+
     fn random(&self, size: usize) -> Self::Storage {
-        BitVec::random(&mut self.rng.write(), size)
+        BitVec::random(&mut *self.rng.write(), size)
+    }
+
+    fn random_with<G: rand::Rng>(&self, rng: &mut G, size: usize) -> Self::Storage {
+        BitVec::random(rng, size)
+    }
+
+    fn accumulate_dense(a: &Self::Storage, out: &mut [f32], weight: f32) {
+        // XOR binding corresponds to multiplication in the bipolar view with 0 -> +1 and 1 -> -1.
+        for (target, bit) in out.iter_mut().zip(a.iter().by_vals()) {
+            *target += weight * (1.0 - 2.0 * f32::from(u8::from(bit)));
+        }
+    }
+
+    fn normalize_dense(&self, dense: &[f32]) -> Self::Storage {
+        // Ties are broken by a fixed, seed-derived vector to stay both deterministic and unbiased.
+        let tiebreaker = self.random_named(dense.len(), "#tiebreak");
+        dense
+            .iter()
+            .zip(tiebreaker.iter().by_vals())
+            .map(|(value, tie)| match value.partial_cmp(&0.0) {
+                Some(std::cmp::Ordering::Greater) => false,
+                Some(std::cmp::Ordering::Less) => true,
+                _ => tie,
+            })
+            .collect()
     }
 
     fn denormalize(storage: Self::Storage) -> Self::Accumulator {

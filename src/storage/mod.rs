@@ -52,12 +52,32 @@ impl<S: Size, V: VectorSymbolicArchitecture> NamedVectors<S, V> {
     }
 
     pub fn get_or_insert(&mut self, name: impl Into<String>) -> VectorIndex {
-        *self.names.entry(name.into()).or_insert_with(|| {
-            let index = VectorIndex(self.vectors.len());
-            self.vectors
-                .push(Vector::random(&self.vsa, self.size).expect("previously tested"));
-            index
-        })
+        let name = name.into();
+        if let Some(index) = self.names.get(&name) {
+            return *index;
+        }
+
+        let vector = Vector::from_normalized(
+            self.vsa.clone(),
+            self.size,
+            self.vsa.random_named(self.size.size(), &name),
+        );
+        self.insert(name, vector)
+    }
+
+    pub fn insert(&mut self, name: String, vector: Vector<S, V, Normalized<V>>) -> VectorIndex {
+        match self.names.get(&name) {
+            Some(&index) => {
+                self.vectors[index.0] = vector;
+                index
+            }
+            None => {
+                let index = VectorIndex(self.vectors.len());
+                self.vectors.push(vector);
+                self.names.insert(name, index);
+                index
+            }
+        }
     }
 }
 
@@ -90,6 +110,51 @@ impl<S: Size, V: VectorSymbolicArchitecture> Storage<S, V> {
     pub fn push(&mut self, name: impl Into<String>) -> &Vector<S, V, Normalized<V>> {
         let index = self.vectors.get_or_insert(name);
         &self.vectors.vectors[index.0]
+    }
+
+    /// Add a derived vector (e.g. a level or a composite) under the given name. An existing vector with this name is replaced.
+    pub fn insert(
+        &mut self,
+        name: impl Into<String>,
+        vector: Vector<S, V, Normalized<V>>,
+    ) -> Result<VectorIndex, StorageError> {
+        if vector.size != self.vectors.size {
+            return Err(StorageError::InvalidSize);
+        }
+        Ok(self.vectors.insert(name.into(), vector))
+    }
+
+    /// The architecture of the storage.
+    pub fn architecture(&self) -> &V {
+        &self.vectors.vsa
+    }
+
+    /// The size of the vectors in the storage.
+    pub fn size(&self) -> S {
+        self.vectors.size
+    }
+
+    /// A stable fingerprint over all names and vectors, independent of the insertion order.
+    /// Equal digests indicate byte-identical codebooks.
+    pub fn digest(&self) -> u64 {
+        let mut names: Vec<(&String, &VectorIndex)> = self.vectors.names.iter().collect();
+        names.sort_unstable_by(|a, b| a.0.cmp(b.0));
+
+        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+        let mut feed = |bytes: &[u8]| {
+            for byte in bytes {
+                hash ^= u64::from(*byte);
+                hash = hash.wrapping_mul(0x0100_0000_01b3);
+            }
+        };
+        for (name, index) in names {
+            feed(name.as_bytes());
+            feed(&[0]);
+            for value in self.vectors.vectors[index.0].serialize() {
+                feed(&value.to_bits().to_le_bytes());
+            }
+        }
+        hash
     }
 
     /// Add multiple vectors with the given names to the storage.
@@ -356,6 +421,50 @@ mod tests {
         assert_eq!(selected_2[0], &storage["vec1"]);
         assert_eq!(selected_2[1], &storage["vec2"]);
         assert_eq!(selected_2[2], &storage["vec3"]);
+    }
+
+    #[test]
+    fn test_named_vectors_are_order_independent() {
+        let mut storage_1 = Storage::new(
+            crate::architectures::MultiplyAddPermute::<u8>::new(42),
+            crate::Fixed::<256>,
+        )
+        .expect("valid size");
+        storage_1.extend(["a", "b", "c"]);
+
+        let mut storage_2 = Storage::new(
+            crate::architectures::MultiplyAddPermute::<u8>::new(42),
+            crate::Fixed::<256>,
+        )
+        .expect("valid size");
+        // Drawing from the shared generator must not influence named vectors.
+        let _ = Vector::random(storage_2.architecture(), crate::Fixed::<256>);
+        storage_2.extend(["c", "a", "b"]);
+
+        for name in ["a", "b", "c"] {
+            assert_eq!(storage_1[name], storage_2[name]);
+        }
+        assert_eq!(storage_1.digest(), storage_2.digest());
+
+        let mut storage_3 = Storage::new(
+            crate::architectures::MultiplyAddPermute::<u8>::new(43),
+            crate::Fixed::<256>,
+        )
+        .expect("valid size");
+        storage_3.extend(["a", "b", "c"]);
+        assert_ne!(storage_1["a"], storage_3["a"]);
+        assert_ne!(storage_1.digest(), storage_3.digest());
+    }
+
+    #[test]
+    fn test_insert_replaces() {
+        let vsa = crate::architectures::MultiplyAddPermute::<u8>::new(42);
+        let mut storage = Storage::new(vsa, crate::Fixed::<128>).expect("valid size");
+        storage.extend(["a", "b"]);
+        let b = storage["b"].clone();
+        storage.insert("a", b.clone()).expect("same size");
+        assert_eq!(storage["a"], b);
+        assert_eq!(storage.values().count(), 2);
     }
 
     #[test]

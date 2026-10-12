@@ -5,10 +5,12 @@ use ::symbolar::{
     Size, Storage, Subset, Vector,
     architectures::{
         BinarySpatterCode, HolographicReducedRepresentation, MultiplyAddPermute,
-        VectorDerivedTransformationBinding,
+        VectorDerivedTransformationBinding, VectorSymbolicArchitecture,
     },
+    encoding::{Column, DenseElement, Encoder, EncoderSpec, OMITTED},
 };
-use polars::prelude::DataFrame;
+use numpy::{IntoPyArray, PyArray1, PyArray2, PyArrayMethods, PyReadonlyArray1, ndarray::Array2};
+use polars::prelude::{ChunkFillNullValue, DataFrame, DataType, Float64Chunked, UInt32Chunked};
 use pyo3::exceptions::{PyNotImplementedError, PyValueError};
 use pyo3::prelude::*;
 use pyo3_polars::types::PyDataFrame;
@@ -17,6 +19,132 @@ fn to_dynamic_size(size: usize) -> PyResult<Dynamic> {
     NonZero::new(size)
         .map(Dynamic::from)
         .ok_or_else(|| PyValueError::new_err("size must be > 0"))
+}
+
+/// An error for an invalid size, suggesting valid alternatives for architectures restricted to perfect squares.
+fn invalid_size<V: VectorSymbolicArchitecture>(size: usize) -> PyErr {
+    if size > 0 && !V::valid_size(Dynamic::from(NonZero::new(size).expect("non-zero"))) {
+        let root = (size as f64).sqrt().floor() as usize;
+        return PyValueError::new_err(format!(
+            "invalid vector size {size} for architecture: the size must be a perfect square, e.g. {} or {}",
+            root * root,
+            (root + 1) * (root + 1)
+        ));
+    }
+    PyValueError::new_err("invalid vector size for architecture")
+}
+
+/// The codes and optional values of all variables, read from a DataFrame with the columns `<variable>` (codes) and
+/// `<variable>#value` (scaled continuous values).
+struct EncodingColumns {
+    codes: Vec<UInt32Chunked>,
+    values: Vec<Option<Float64Chunked>>,
+}
+
+impl EncodingColumns {
+    fn from_dataframe(spec: &EncoderSpec, dataframe: &DataFrame) -> PyResult<Self> {
+        let mut codes = Vec::with_capacity(spec.variables.len());
+        let mut values = Vec::with_capacity(spec.variables.len());
+        for variable in &spec.variables {
+            let column = dataframe.column(&variable.name).map_err(map_error)?;
+            let column = column
+                .as_materialized_series()
+                .cast(&DataType::UInt32)
+                .map_err(map_error)?;
+            let column = column.u32().map_err(map_error)?;
+            codes.push(
+                column
+                    .fill_null_with_values(OMITTED)
+                    .map_err(map_error)?
+                    .rechunk()
+                    .into_owned(),
+            );
+
+            values.push(
+                match dataframe.column(&format!("{}#value", variable.name)) {
+                    Ok(column) => {
+                        let column = column
+                            .as_materialized_series()
+                            .cast(&DataType::Float64)
+                            .map_err(map_error)?;
+                        Some(
+                            column
+                                .f64()
+                                .map_err(map_error)?
+                                .fill_null_with_values(f64::NAN)
+                                .map_err(map_error)?
+                                .rechunk()
+                                .into_owned(),
+                        )
+                    }
+                    Err(_) => None,
+                },
+            );
+        }
+        Ok(Self { codes, values })
+    }
+
+    fn columns(&self) -> PyResult<Vec<Column<'_>>> {
+        self.codes
+            .iter()
+            .zip(self.values.iter())
+            .map(|(codes, values)| {
+                let codes = codes.cont_slice().map_err(map_error)?;
+                Ok(match values {
+                    Some(values) => Column::Continuous {
+                        codes,
+                        values: values.cont_slice().map_err(map_error)?,
+                    },
+                    None => Column::Codes(codes),
+                })
+            })
+            .collect()
+    }
+
+    fn rows(&self) -> usize {
+        self.codes.first().map(|codes| codes.len()).unwrap_or(0)
+    }
+}
+
+/// Encode all records into a new NumPy array, releasing the GIL meanwhile.
+fn encode_to_numpy<'py, V, T>(
+    py: Python<'py>,
+    encoder: &Encoder<V>,
+    dataframe: PyDataFrame,
+    normalize: bool,
+) -> PyResult<Bound<'py, PyArray2<T>>>
+where
+    V: VectorSymbolicArchitecture + Send + Sync,
+    V::Storage: Send + Sync,
+    T: DenseElement + numpy::Element + Default,
+{
+    let dataframe: DataFrame = dataframe.into();
+    let columns = EncodingColumns::from_dataframe(encoder.spec(), &dataframe)?;
+    let output = PyArray2::<T>::zeros(py, [columns.rows(), encoder.size()], false);
+    {
+        let mut guard = output.readwrite();
+        let out = guard.as_slice_mut().map_err(map_error)?;
+        let columns = columns.columns()?;
+        py.detach(|| encoder.encode_into(&columns, out, normalize))
+            .map_err(map_error)?;
+    }
+    Ok(output)
+}
+
+/// Stack dense vectors into a two-dimensional NumPy array.
+fn dense_matrix<'py, V: VectorSymbolicArchitecture>(
+    py: Python<'py>,
+    encoder: &Encoder<V>,
+    vectors: &[V::Storage],
+) -> Bound<'py, PyArray2<f32>> {
+    let size = encoder.size();
+    let mut flat = Vec::with_capacity(vectors.len() * size);
+    for vector in vectors {
+        flat.extend(encoder.to_dense(vector));
+    }
+    Array2::from_shape_vec((vectors.len(), size), flat)
+        .expect("consistent shape")
+        .into_pyarray(py)
 }
 
 fn map_error<E: std::fmt::Display>(err: E) -> PyErr {
@@ -140,6 +268,8 @@ macro_rules! define_architecture_bindings {
         storage_inner = $storage_inner:ty,
         subset_py = $subset_py:ident,
         subset_name = $subset_name:literal,
+        encoder_py = $encoder_py:ident,
+        encoder_name = $encoder_name:literal,
     ) => {
         #[pyclass(name = $architecture_name, extends = PyVsa)]
         #[derive(Clone, Debug)]
@@ -172,8 +302,144 @@ macro_rules! define_architecture_bindings {
                 num_elements: usize,
             ) -> PyResult<Py<$storage_py>> {
                 let inner = <$storage_inner>::new(self.inner.clone(), to_dynamic_size(num_elements)?)
-                    .ok_or_else(|| PyValueError::new_err("invalid vector size for architecture"))?;
+                    .ok_or_else(|| invalid_size::<$architecture_inner>(num_elements))?;
                 $storage_py::from_inner(py, num_elements, inner)
+            }
+
+            /// The seed of the architecture, from which all named vectors are derived.
+            fn seed(&self) -> u64 {
+                self.inner.seed()
+            }
+
+            /// Create an encoder from its JSON specification.
+            fn create_encoder(&self, spec: &str) -> PyResult<$encoder_py> {
+                let spec: EncoderSpec = serde_json::from_str(spec).map_err(map_error)?;
+                if !<$architecture_inner>::valid_size(to_dynamic_size(spec.size)?) {
+                    return Err(invalid_size::<$architecture_inner>(spec.size));
+                }
+                Ok($encoder_py {
+                    inner: Encoder::new(self.inner.clone(), spec).map_err(map_error)?,
+                })
+            }
+
+            /// Normalize a dense (bipolar or real-valued) vector, e.g. a row of an encoded matrix, into a vector.
+            fn vector_from_numpy(
+                &self,
+                py: Python<'_>,
+                dense: PyReadonlyArray1<'_, f32>,
+            ) -> PyResult<Py<$vector_py>> {
+                let dense = dense.as_slice().map_err(map_error)?;
+                let size = to_dynamic_size(dense.len())?;
+                if !<$architecture_inner>::valid_size(size) {
+                    return Err(invalid_size::<$architecture_inner>(dense.len()));
+                }
+                $vector_py::from_inner(
+                    py,
+                    Vector::from_normalized(self.inner.clone(), size, self.inner.normalize_dense(dense)),
+                )
+            }
+        }
+
+        /// Encodes records into hypervectors. Created by `create_encoder` of an architecture.
+        #[pyclass(name = $encoder_name)]
+        #[derive(Clone, Debug)]
+        struct $encoder_py {
+            inner: Encoder<$architecture_inner>,
+        }
+
+        #[pymethods]
+        impl $encoder_py {
+            /// The dimensionality of the vectors.
+            fn size(&self) -> usize {
+                self.inner.size()
+            }
+
+            /// The names of all vectors in the codebook.
+            fn symbols(&self) -> Vec<String> {
+                self.inner.codebook().values().map(|value| value.to_string()).collect()
+            }
+
+            /// A stable fingerprint of the codebook as a hexadecimal string.
+            fn digest(&self) -> String {
+                format!("{:016x}", self.inner.codebook().digest())
+            }
+
+            /// Encode the records given as codes (`<variable>`) and scaled values (`<variable>#value`).
+            #[pyo3(signature = (codes, normalize = true, dtype = "float32"))]
+            fn encode<'py>(
+                &self,
+                py: Python<'py>,
+                codes: PyDataFrame,
+                normalize: bool,
+                dtype: &str,
+            ) -> PyResult<Bound<'py, PyAny>> {
+                match dtype {
+                    "float32" => Ok(encode_to_numpy::<_, f32>(py, &self.inner, codes, normalize)?.into_any()),
+                    "int8" => Ok(encode_to_numpy::<_, i8>(py, &self.inner, codes, normalize)?.into_any()),
+                    _ => Err(PyValueError::new_err("dtype must be 'float32' or 'int8'")),
+                }
+            }
+
+            /// The labels of the keys of a variable, in the order of their codes.
+            fn labels(&self, variable: &str) -> PyResult<Vec<String>> {
+                Ok(self.inner.labels(variable).map_err(map_error)?.to_vec())
+            }
+
+            /// The dense full keys `M ⊛ R ⊛ Φ(k)` of a variable, one row per code.
+            fn keys<'py>(&self, py: Python<'py>, variable: &str) -> PyResult<Bound<'py, PyArray2<f32>>> {
+                let keys = self.inner.keys(variable).map_err(map_error)?;
+                Ok(dense_matrix(py, &self.inner, &keys))
+            }
+
+            /// The dense full keys `M ⊛ R ⊛ B^x` of a continuous variable for the given (scaled) values.
+            fn continuous_keys<'py>(
+                &self,
+                py: Python<'py>,
+                variable: &str,
+                values: Vec<f64>,
+            ) -> PyResult<Bound<'py, PyArray2<f32>>> {
+                let keys = self.inner.continuous_keys(variable, &values).map_err(map_error)?;
+                Ok(dense_matrix(py, &self.inner, &keys))
+            }
+
+            /// Evaluate an expression into its dense representation.
+            /// Resolves codebook names, `<variable>:<label>` and `<variable>:=<scaled value>`.
+            fn evaluate<'py>(&self, py: Python<'py>, expression: &str) -> PyResult<Bound<'py, PyArray1<f32>>> {
+                let expression: Expression = expression.parse().map_err(map_error)?;
+                let vector = self.inner.evaluate(&expression).map_err(map_error)?;
+                Ok(self.inner.to_dense(vector.as_storage()).into_pyarray(py))
+            }
+
+            /// Evaluate an expression into a vector.
+            fn evaluate_vector(&self, py: Python<'_>, expression: &str) -> PyResult<Py<$vector_py>> {
+                let expression: Expression = expression.parse().map_err(map_error)?;
+                let vector = self.inner.evaluate(&expression).map_err(map_error)?;
+                $vector_py::from_inner(py, vector)
+            }
+
+            /// Get a named vector of the codebook.
+            fn get(&self, py: Python<'_>, name: &str) -> PyResult<Option<Py<$vector_py>>> {
+                match self.inner.codebook().get(&name).cloned() {
+                    Some(inner) => Ok(Some($vector_py::from_inner(py, inner)?)),
+                    None => Ok(None),
+                }
+            }
+
+            /// Dense random vectors derived from `<name>#<index>`.
+            fn random<'py>(&self, py: Python<'py>, name: &str, count: usize) -> Bound<'py, PyArray2<f32>> {
+                let flat = self.inner.random_dense(name, count);
+                Array2::from_shape_vec((count, self.inner.size()), flat)
+                    .expect("consistent shape")
+                    .into_pyarray(py)
+            }
+
+            fn __repr__(&self) -> String {
+                format!(
+                    "{}(size={}, variables={})",
+                    $encoder_name,
+                    self.inner.size(),
+                    self.inner.spec().variables.len()
+                )
             }
         }
 
@@ -356,7 +622,7 @@ macro_rules! define_architecture_bindings {
             #[new]
             fn new(architecture: &$architecture_py, size: usize) -> PyResult<(Self, PyStorage)> {
                 let inner = <$storage_inner>::new(architecture.inner.clone(), to_dynamic_size(size)?)
-                    .ok_or_else(|| PyValueError::new_err("invalid vector size for architecture"))?;
+                    .ok_or_else(|| invalid_size::<$architecture_inner>(size))?;
                 Ok((
                     Self { inner, size },
                     PyStorage::new($architecture_name, size),
@@ -611,6 +877,8 @@ define_architecture_bindings!(
     storage_inner = BscStorage,
     subset_py = PyBscSubset,
     subset_name = "BscSubset",
+    encoder_py = PyBscEncoder,
+    encoder_name = "BscEncoder",
 );
 
 define_architecture_bindings!(
@@ -629,6 +897,8 @@ define_architecture_bindings!(
     storage_inner = MapStorage,
     subset_py = PyMapSubset,
     subset_name = "MapSubset",
+    encoder_py = PyMapEncoder,
+    encoder_name = "MapEncoder",
 );
 
 define_architecture_bindings!(
@@ -655,6 +925,8 @@ define_architecture_bindings!(
     storage_inner = HrrStorage,
     subset_py = PyHrrSubset,
     subset_name = "HrrSubset",
+    encoder_py = PyHrrEncoder,
+    encoder_name = "HrrEncoder",
 );
 
 define_architecture_bindings!(
@@ -681,10 +953,12 @@ define_architecture_bindings!(
     storage_inner = VtbStorage,
     subset_py = PyVtbSubset,
     subset_name = "VtbSubset",
+    encoder_py = PyVtbEncoder,
+    encoder_name = "VtbEncoder",
 );
 
 #[pymodule]
-fn symbolar(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _native(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyVsa>()?;
     module.add_class::<PyVector>()?;
     module.add_class::<PyStorage>()?;
@@ -709,9 +983,13 @@ fn symbolar(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyVtbStorage>()?;
 
     module.add_class::<PyBscSubset>()?;
+    module.add_class::<PyBscEncoder>()?;
     module.add_class::<PyMapSubset>()?;
+    module.add_class::<PyMapEncoder>()?;
     module.add_class::<PyHrrSubset>()?;
+    module.add_class::<PyHrrEncoder>()?;
     module.add_class::<PyVtbSubset>()?;
+    module.add_class::<PyVtbEncoder>()?;
 
     Ok(())
 }

@@ -15,6 +15,7 @@ pub struct VectorDerivedTransformationBinding<
 > {
     marker: std::marker::PhantomData<fn() -> R>,
     rng: Arc<parking_lot::RwLock<Rng>>,
+    seed: u64,
 }
 
 impl<R: FloatResolution, Rng: rand::Rng> Clone for VectorDerivedTransformationBinding<R, Rng> {
@@ -22,6 +23,7 @@ impl<R: FloatResolution, Rng: rand::Rng> Clone for VectorDerivedTransformationBi
         Self {
             marker: self.marker,
             rng: self.rng.clone(),
+            seed: self.seed,
         }
     }
 }
@@ -32,6 +34,7 @@ impl<R: FloatResolution, Rng: rand::Rng + SeedableRng> VectorDerivedTransformati
         Self {
             marker: std::marker::PhantomData,
             rng: Arc::new(parking_lot::RwLock::new(Rng::seed_from_u64(seed))),
+            seed,
         }
     }
 }
@@ -97,8 +100,17 @@ impl<R: FloatResolution, Rng: rand::Rng> VectorSymbolicArchitecture
         sqrt_d * sqrt_d == len
     }
 
+    const REAL_VALUED: bool = true;
+
+    fn seed(&self) -> u64 {
+        self.seed
+    }
+
     fn random(&self, size: usize) -> Self::Storage {
-        let mut rng = self.rng.write();
+        self.random_with(&mut *self.rng.write(), size)
+    }
+
+    fn random_with<G: rand::Rng>(&self, rng: &mut G, size: usize) -> Self::Storage {
         let mut out: Vec<R> = (0..size)
             .map(|_| rng.random_range(-R::ONE..R::ONE))
             .collect();
@@ -111,6 +123,21 @@ impl<R: FloatResolution, Rng: rand::Rng> VectorSymbolicArchitecture
         }
 
         out
+    }
+
+    fn accumulate_dense(a: &Self::Storage, out: &mut [f32], weight: f32) {
+        for (target, value) in out.iter_mut().zip(a.iter()) {
+            let value: f64 = value.as_();
+            *target += weight * value as f32;
+        }
+    }
+
+    fn normalize_dense(&self, dense: &[f32]) -> Self::Storage {
+        let values: Vec<R> = dense
+            .iter()
+            .map(|value| R::from(*value).expect("f32 fits into the resolution"))
+            .collect();
+        self.normalize(values)
     }
 
     fn normalize(&self, storage: Self::Accumulator) -> Self::Storage {

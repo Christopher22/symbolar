@@ -171,7 +171,18 @@ impl Hash for Expression {
 impl std::fmt::Display for Expression {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Expression::Value(val) => write!(f, "{}", val),
+            Expression::Value(val) => {
+                // Quote names which would not survive a round trip through the parser.
+                if val.is_empty()
+                    || val
+                        .chars()
+                        .any(|c| c.is_whitespace() || "()+*^`".contains(c))
+                {
+                    write!(f, "`{}`", val)
+                } else {
+                    write!(f, "{}", val)
+                }
+            }
             Expression::Plus(terms) => {
                 write!(f, "(")?;
                 for (idx, term) in terms.iter().enumerate() {
@@ -372,6 +383,20 @@ mod tests {
             "1 + * 2".parse::<Expression>(),
             Err(ParseError::UnexpectedToken("*".to_string()))
         );
+    }
+
+    #[test]
+    fn test_parsing_quoted() {
+        let expr: Expression = "a:`weiß nicht` * `x + y`".parse().unwrap();
+        assert_eq!(
+            expr,
+            Expression::Mul(
+                Box::new(Expression::Value("a:weiß nicht".into())),
+                Box::new(Expression::Value("x + y".into()))
+            )
+        );
+        assert_eq!(expr.to_string(), "(`a:weiß nicht` * `x + y`)");
+        assert_eq!(expr.to_string().parse::<Expression>().unwrap(), expr);
     }
 
     #[test]

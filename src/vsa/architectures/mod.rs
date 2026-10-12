@@ -9,7 +9,7 @@ use bitvec::vec::BitVec;
 use num_traits::float::Float;
 use num_traits::int::PrimInt;
 use num_traits::{AsPrimitive, ConstOne, ConstZero, NumAssign, Unsigned};
-use rand::RngExt;
+use rand::{RngExt, SeedableRng};
 
 use crate::Size;
 
@@ -30,8 +30,31 @@ pub trait VectorSymbolicArchitecture: Clone {
         true
     }
 
-    /// Create a random vector in the architecture.
+    /// The seed the architecture was created with. Named vectors are derived from it.
+    fn seed(&self) -> u64;
+
+    /// Create a random vector in the architecture, drawing from the shared random number generator.
     fn random(&self, size: usize) -> Self::Storage;
+
+    /// Create a random vector in the architecture, drawing from the given random number generator.
+    fn random_with<G: rand::Rng>(&self, rng: &mut G, size: usize) -> Self::Storage;
+
+    /// Create a random vector which is fully determined by the seed of the architecture and the name.
+    /// The result neither depends on the state of the shared random number generator nor on the order of creation.
+    fn random_named(&self, size: usize, name: &str) -> Self::Storage {
+        let mut rng = named_rng(self.seed(), name);
+        self.random_with(&mut rng, size)
+    }
+
+    /// Add the dense (bipolar or real-valued) representation of a vector, scaled by `weight`, onto `out`.
+    /// Binding distributes over this addition for all architectures.
+    fn accumulate_dense(a: &Self::Storage, out: &mut [f32], weight: f32);
+
+    /// Normalize a dense (bipolar or real-valued) representation back into a vector of the architecture.
+    fn normalize_dense(&self, dense: &[f32]) -> Self::Storage;
+
+    /// Whether the vectors are real-valued, which allows for fractional power encoding.
+    const REAL_VALUED: bool = false;
 
     /// Normalize a accumulator.
     fn normalize(&self, storage: Self::Accumulator) -> Self::Storage;
@@ -63,6 +86,27 @@ pub trait VectorSymbolicArchitecture: Clone {
         accumulator: &mut Self::Accumulator,
         vector: &Self::Accumulator,
     );
+}
+
+/// Derive a seed which is fully determined by a global seed and a name.
+///
+/// Uses FNV-1a on the name and SplitMix64 for mixing, as both are stable across Rust and library releases.
+pub fn derive_seed(seed: u64, name: &str) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in name.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+    }
+
+    let mut z = (seed ^ hash).wrapping_add(0x9e37_79b9_7f4a_7c15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^ (z >> 31)
+}
+
+/// Create a portable random number generator for a name. ChaCha8 has a documented, release-independent output stream.
+pub fn named_rng(seed: u64, name: &str) -> chacha20::ChaCha8Rng {
+    chacha20::ChaCha8Rng::seed_from_u64(derive_seed(seed, name))
 }
 
 /// A vector symbolic architecture where the bind operation is self-inverse.
@@ -248,6 +292,15 @@ mod tests {
             assert_eq!(a.len(), size, "wrong length at size {size}");
             assert_eq!(a, b, "same seed must produce the same bits at size {size}");
         }
+    }
+
+    #[test]
+    fn derived_seeds_are_stable_and_distinct() {
+        assert_eq!(derive_seed(42, "a"), derive_seed(42, "a"));
+        assert_ne!(derive_seed(42, "a"), derive_seed(42, "b"));
+        assert_ne!(derive_seed(42, "a"), derive_seed(43, "a"));
+        // Pin the value so accidental changes of the derivation (which would change every codebook) are noticed.
+        assert_eq!(derive_seed(0, ""), 14_087_677_454_934_409_008);
     }
 
     #[test]

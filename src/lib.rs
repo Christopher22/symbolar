@@ -12,6 +12,7 @@
     unused_qualifications
 )]
 
+pub mod encoding;
 mod expression;
 mod storage;
 mod vsa;

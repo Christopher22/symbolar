@@ -34,6 +34,17 @@ jobs:
       - run: cargo build --verbose
       - run: cargo test --all --verbose
       - run: cargo clippy --all -- -D warnings
+  python:
+    name: Python bindings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - run: rustup update stable && rustup default stable
+      - run: pip install ./python pytest
+      - run: pytest -q python/tests
   publish-docs:
     name: Publish Docs
     runs-on: ubuntu-latest

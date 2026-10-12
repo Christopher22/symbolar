@@ -86,6 +86,41 @@ expected = storage.get("PES")
 assert solution.equals(expected)
 ```
 
+## Encoding tabular data
+
+The Python package encodes the rows of a Polars DataFrame as role-filler bindings, e.g. for linear readouts, decoding, symbolic cohort queries and explanations of model weights. A `Schema` describes how each variable is encoded. It can be written explicitly or inferred from the dtypes (`Enum`/`Categorical`/`String` → nominal, `Boolean` → binary, numbers → level vectors), with per-column overrides:
+
+```python
+import symbolar as sb
+
+missing = sb.MissingCodes({7775: "structural", 8888: "refused", 9999: "dont_know"},
+                          policy={"refused": "encode", "dont_know": "encode"})
+schema = sb.Schema.infer(
+    train,
+    overrides={
+        "isced": sb.Ordinal("isced"),                             # ordered levels
+        "bmi": sb.Levels(64, quantiles=(0.005, 0.995)),            # level vectors on [P0.5, P99.5]
+        "mi": sb.TimedEvent("mi", indicator="mi_ever", delta="mi_years_ago"),
+        "icd": sb.HierarchicalCode("icd", hierarchy=sb.icd10_hierarchy, pool="icd10"),
+        "diabetes": {"pool": "yes_no"},                           # share fillers with other yes/no questions
+    },
+    modules={"bmi": "anthropometry", "isced": "sociodemographics"},
+    missing=missing,
+)
+
+encoder = sb.Encoder(sb.MultiplyAddPermute(42), 10_000, schema, structure="hierarchical").fit(train)
+X_train, X_test = encoder.transform(train), encoder.transform(test)  # NumPy, int8 for normalized MAP/BSC
+
+encoder.decode(X_test, ["bmi", "isced"])                            # nearest full keys
+tau = encoder.null_threshold(X_train)                              # similarity of random vectors
+encoder.query(X_test, ["smoking:current", "bmi>=30"], tau)         # conjunction, term by term
+encoder.explain(weights)                                           # ⟨w, M ⊛ R ⊛ Φ(k)⟩ per variable and value
+```
+
+`fit` only derives the data-dependent parameters (categories, level ranges, scaling of fractional power encodings), so it can be applied to each training fold separately; the codebook only depends on the names and the seed. Codebook names follow a fixed scheme and can be used in expressions: roles `<variable>`, modules `@<module>`, fillers `<pool>=<value>`, levels `<pool>#<index>` and missing values `MISSING=<category>`. Full keys are written `<variable>:<label>`, and backticks quote names with whitespace.
+
+Since version 0.14, named vectors are derived from the seed and the name only (`random_named`), independent of the order of creation. Vectors created with earlier versions differ.
+
 ## Project Status
 
 The crate is under active development. APIs may evolve before a 1.0 release.
@@ -104,6 +139,7 @@ To run the Python tests (including the Dollar-in-Mexico test), you can just run:
 
 ```bash
 cd python
+maturin develop --release
 pytest -q
 ```
 
